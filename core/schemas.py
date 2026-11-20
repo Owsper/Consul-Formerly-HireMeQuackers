@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from core.text import normalize_whitespace
+from core.text import normalize_string_list, normalize_whitespace
 
 
 def utcnow() -> datetime:
@@ -125,6 +125,11 @@ class EmploymentEntry(_Lenient):
     technologies: list[str] = Field(default_factory=list)
     quantified_results: list[str] = Field(default_factory=list)
 
+    @field_validator("technologies", mode="before")
+    @classmethod
+    def _normalize_technologies(cls, value: Any) -> list[str]:
+        return normalize_string_list(value)
+
 
 class ProjectEntry(_Lenient):
     id: str = ""
@@ -141,10 +146,20 @@ class ProjectEntry(_Lenient):
     verified_achievements: list[str] = Field(default_factory=list)
     label: str = "project"  # project | academic_project
 
+    @field_validator("technologies", mode="before")
+    @classmethod
+    def _normalize_technologies(cls, value: Any) -> list[str]:
+        return normalize_string_list(value)
+
 
 class SkillCategory(_Lenient):
     name: str = ""
     skills: list[str] = Field(default_factory=list)
+
+    @field_validator("skills", mode="before")
+    @classmethod
+    def _normalize_skills(cls, value: Any) -> list[str]:
+        return normalize_string_list(value)
 
 
 class Certification(_Lenient):
