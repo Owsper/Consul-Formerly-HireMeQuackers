@@ -12,7 +12,7 @@ from core.schemas import (
     CandidateProfileData, Certification, EducationEntry, EmploymentEntry, EvidenceItem,
     EvidenceStatus, LanguageEntry, ProjectEntry, SkillCategory,
 )
-from core.text import normalize_string_list
+from core.text import normalize_string_list, skill_group_status
 from services.cv_extraction import extract_document, heuristic_hints, structured_extraction
 from services.profile_service import (
     get_active_profile, list_profiles, merge_profiles, restore_version, save_profile,
@@ -332,12 +332,21 @@ def _render_profile_editor(data: CandidateProfileData) -> None:
     data.projects = [ProjectEntry.model_validate(x) for x in _rebuild(data, proj_frame, proj_columns)]
 
     st.markdown("##### Skills")
-    skill_columns = {"name": "text", "skills": "csv"}
+    st.caption("Mark a group as **learning** or **interest** so it broadens discovery without "
+               "being scored or written as demonstrated experience.")
+    skill_columns = {"name": "text", "proficiency": "text", "skills": "csv"}
+    skill_rows = []
+    for group in data.skills:
+        row = group.model_dump(mode="json")
+        row["proficiency"] = row.get("proficiency") or skill_group_status(group.name)
+        skill_rows.append(row)
     skill_frame = st.data_editor(
-        _editor_rows([s.model_dump(mode="json") for s in data.skills], skill_columns),
+        _editor_rows(skill_rows, skill_columns),
         num_rows="dynamic", use_container_width=True, key=f"skills_{epoch}",
         column_config={
             "name": st.column_config.TextColumn("Group"),
+            "proficiency": st.column_config.SelectboxColumn(
+                "Status", options=["demonstrated", "learning", "interest"], width="small"),
             "skills": st.column_config.TextColumn("Skills (comma separated)", width="large"),
             "_id": None,
         },
