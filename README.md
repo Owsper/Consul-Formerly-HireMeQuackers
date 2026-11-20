@@ -1,4 +1,4 @@
-# consul
+# CONSUL (previously HireMeQuackers)
 
 A local-first job discovery, candidate intelligence, CV tailoring and application
 tracking workspace. It is a Streamlit app backed by a small set of services and a
