@@ -22,6 +22,21 @@ except Exception:  # pragma: no cover - dotenv missing is fine
 PROJECT_ROOT = Path(__file__).resolve().parent
 DATA_DIR_DEFAULT = PROJECT_ROOT / "data"
 
+# (base URL, example model) for providers that speak the OpenAI chat shape.
+# ``LLM_BASE_URL`` and ``LLM_MODEL`` always override these.
+LLM_PROVIDER_PRESETS: dict[str, tuple[str, str]] = {
+    "gemini": ("", "gemini-2.5-flash"),
+    "openai": ("https://api.openai.com/v1", "gpt-4o-mini"),
+    "groq": ("https://api.groq.com/openai/v1", "openai/gpt-oss-20b"),
+    "openrouter": ("https://openrouter.ai/api/v1", "openai/gpt-4o-mini"),
+    "deepseek": ("https://api.deepseek.com/v1", "deepseek-chat"),
+    "mistral": ("https://api.mistral.ai/v1", "mistral-small-latest"),
+    "cerebras": ("https://api.cerebras.ai/v1", "llama-3.3-70b"),
+    "zai": ("https://api.z.ai/api/paas/v4", "glm-4-flash"),
+    "ollama": ("http://localhost:11434/v1", "llama3.1"),
+    "custom": ("", ""),
+}
+
 
 def _env(name: str, default: str = "") -> str:
     value = os.environ.get(name, default)
@@ -60,6 +75,18 @@ class Settings:
     llm_temperature: float = 0.2
     llm_max_retries: int = 2
 
+    # Provider selection. ``gemini`` keeps the original behaviour; every other
+    # value talks to an OpenAI-compatible /chat/completions endpoint, so any
+    # provider exposing that shape (OpenAI, Groq, OpenRouter, DeepSeek, Mistral,
+    # Cerebras, Z.ai, a local Ollama) works with the same key variables.
+    llm_provider: str = "gemini"
+    llm_api_key: str = ""
+    llm_base_url: str = ""
+    llm_model: str = ""
+    llm_timeout_seconds: int = 45
+    llm_max_output_tokens: int = 8192
+    llm_reasoning_effort: str = ""
+
     http_timeout_seconds: int = 20
     max_concurrency: int = 8
     per_source_concurrency: int = 3
@@ -77,7 +104,27 @@ class Settings:
 
     @property
     def llm_available(self) -> bool:
-        return bool(self.llm_enabled and self.gemini_api_key)
+        if not self.llm_enabled:
+            return False
+        if self.llm_provider == "gemini":
+            return bool(self.gemini_api_key)
+        if self.llm_provider == "ollama":
+            return True  # local server, no key required
+        return bool(self.llm_api_key)
+
+    @property
+    def active_model(self) -> str:
+        if self.llm_model:
+            return self.llm_model
+        if self.llm_provider == "gemini":
+            return self.gemini_model
+        return LLM_PROVIDER_PRESETS.get(self.llm_provider, ("", ""))[1]
+
+    @property
+    def llm_endpoint(self) -> str:
+        if self.llm_base_url:
+            return self.llm_base_url.rstrip("/")
+        return LLM_PROVIDER_PRESETS.get(self.llm_provider, ("", ""))[0]
 
     @property
     def uploads_dir(self) -> Path:
@@ -103,7 +150,8 @@ class Settings:
         """Human readable list of optional integrations lacking credentials."""
         missing: dict[str, list[str]] = {}
         if not self.llm_available:
-            missing["Gemini LLM"] = ["GEMINI_API_KEY"]
+            key = "GEMINI_API_KEY" if self.llm_provider == "gemini" else "LLM_API_KEY"
+            missing[f"LLM ({self.llm_provider})"] = [key]
         if not (self.adzuna_app_id and self.adzuna_app_key):
             missing["Adzuna"] = ["ADZUNA_APP_ID", "ADZUNA_APP_KEY"]
         if not self.jooble_api_key:
@@ -124,6 +172,13 @@ def _build_settings() -> Settings:
         gemini_api_key=_env("GEMINI_API_KEY"),
         gemini_model=_env("GEMINI_MODEL") or "gemini-2.5-flash",
         llm_enabled=_env_bool("LLM_ENABLED", True),
+        llm_provider=(_env("LLM_PROVIDER") or "gemini").lower(),
+        llm_api_key=_env("LLM_API_KEY") or _env("ZAI_API_KEY"),
+        llm_base_url=_env("LLM_BASE_URL") or _env("ZAI_API_BASE"),
+        llm_model=_env("LLM_MODEL"),
+        llm_timeout_seconds=_env_int("LLM_TIMEOUT_SECONDS", 45),
+        llm_max_output_tokens=_env_int("LLM_MAX_OUTPUT_TOKENS", 8192),
+        llm_reasoning_effort=_env("LLM_REASONING_EFFORT").lower(),
         http_timeout_seconds=_env_int("HTTP_TIMEOUT_SECONDS", 20),
         max_concurrency=_env_int("MAX_CONCURRENCY", 8),
         per_source_concurrency=_env_int("PER_SOURCE_CONCURRENCY", 3),
