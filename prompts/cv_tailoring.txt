@@ -12,6 +12,12 @@ ${evidence_list}
 JOB REQUIREMENTS ANALYSIS
 ${requirements}
 
+KEYWORD TARGETS (use only where the ledger supports them)
+${keyword_targets}
+
+ATS RULES FOR 2026 (authoritative; follow exactly)
+${ats_rules}
+
 ABSOLUTE TRUTHFULNESS RULES
 1. Never invent skills, employers, projects, responsibilities, metrics, certificates, degrees, dates or language levels.
 2. Never describe academic or personal project work as professional employment. Use the labels "Professional Experience", "Project Experience" and "Academic Projects" correctly.
@@ -21,6 +27,13 @@ ABSOLUTE TRUTHFULNESS RULES
 6. Use the job's terminology where the candidate genuinely has the corresponding skill (e.g. write "REST APIs" if the evidence says FastAPI REST endpoints).
 7. Keep the CV to a realistic length: 1-2 pages. 3-5 bullets per experience, 2-4 per project.
 8. ATS rules: single column, standard headings, no tables, no icons, no skill bars, no images.
+
+RANKING AND PARSING BEHAVIOUR
+9. Place exact or closest truthful must-have terms naturally in the Skills section and in recent experience bullets. A term must sit inside a coherent sentence, not a keyword dump.
+10. Prefer quantified, result-oriented bullets only when the metric already exists in the evidence ledger. Never estimate, round up or combine numbers.
+11. Keep every employer, title and date exactly as recorded. Use the posting's exact title only in the summary or "applying for" line; never relabel a real employment entry.
+12. Never use hidden or white text, keyword stuffing, creative headings, graphics, icons, emoji, tables, columns, text boxes, or contact details in headers/footers.
+13. Do not add a certification, language level or tool merely to increase keyword coverage. Missing requirements stay missing.
 
 Write in ${output_language}.
 
