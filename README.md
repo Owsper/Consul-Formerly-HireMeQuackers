@@ -44,7 +44,12 @@ rule-based planner, scoring, and CV builder.
 All configuration is environment based (`.env` is loaded automatically). Secrets
 are never written to SQLite, logs or the UI.
 
-- `GEMINI_API_KEY`, `GEMINI_MODEL`, `LLM_ENABLED` — optional AI features.
+- `GEMINI_API_KEY`, `GEMINI_MODEL` — Google Gemini (the default provider).
+- `LLM_PROVIDER`, `LLM_API_KEY`, `LLM_MODEL`, `LLM_BASE_URL` — use any other
+  OpenAI-compatible provider (`openai`, `groq`, `openrouter`, `deepseek`,
+  `mistral`, `cerebras`, `zai`, `ollama`, or `custom` with your own base URL).
+- `LLM_TIMEOUT_SECONDS`, `LLM_MAX_OUTPUT_TOKENS`, `LLM_ENABLED` — request ceiling
+  and output cap; `LLM_ENABLED=0` runs fully offline.
 - `DATABASE_URL`, `DATA_DIR`, `MAX_UPLOAD_MB` — storage.
 - `CONSUL_SOFFICE` — optional path to a LibreOffice/soffice binary for DOCX→PDF.
 - `HTTP_TIMEOUT_SECONDS`, `MAX_CONCURRENCY`, `USER_AGENT` — scanning behaviour.
