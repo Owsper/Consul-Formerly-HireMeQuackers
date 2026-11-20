@@ -514,6 +514,7 @@ class ValidationReport(BaseModel):
     unmet_requirements: list[str] = Field(default_factory=list)
     removed_content: list[str] = Field(default_factory=list)
     ats_checks: dict[str, bool] = Field(default_factory=dict)
+    ats_report: dict[str, Any] = Field(default_factory=dict)
     layout: dict[str, Any] = Field(default_factory=dict)
     checked_at: datetime = Field(default_factory=utcnow)
 

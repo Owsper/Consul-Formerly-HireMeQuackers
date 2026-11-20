@@ -55,7 +55,7 @@ The central rule is simple:
 | **Sources** | 13 connectors: nine ATS platforms, two aggregators, web search, generic career pages |
 | **Documents** | ATS-safe DOCX, PDF and TXT generated from a fixed master template |
 | **Privacy** | Local data only, redacting logs, SSRF protection, export/backup/delete controls |
-| **Tests** | 109 tests, all HTTP mocked; suite runs in about 40–50 seconds |
+| **Tests** | 117 tests, all HTTP mocked; suite runs in about 40–50 seconds |
 
 ### Design principles
 
@@ -621,6 +621,37 @@ validation or layout checks report errors. Download buttons exist only for an ap
 **Re-exporting revokes approval** so the new render must be reviewed again. The optional
 second-pass LLM audit asks the model to find unsupported claims in the generated CV.
 
+### ATS readiness (2026 rules)
+
+`core/ats_rules.py` is the versioned, single source of truth for parsing and ranking
+rules. Tailoring prompts, validation and the layout checks all read from it, so the
+rules are updated in one place. It encodes:
+
+- **Hard parse rules** — single column, no tables/text boxes, standard headings,
+  contact details in the body, standard fonts (Arial, Calibri, Times New Roman,
+  Georgia at 10–12 pt), plain bullets and a real text layer.
+- **Ranking signals** — natural must-have keyword placement in Skills and recent
+  experience, truthful title terminology, quantified evidence and consistent dates.
+- **Anti-patterns** — hidden/white text, keyword stuffing, creative headings,
+  graphics, icons, photos, skill bars and image-only files.
+
+Each CV version stores an `ats_report` in its validation report. CV Studio shows a
+concise readiness panel:
+
+| Signal | Meaning |
+| --- | --- |
+| Parse risk | `low`, `medium` or `high`, with the reasons |
+| Must-have keyword coverage | Terms used / terms the candidate can actually evidence |
+| Quantified bullets | Bullets containing numbers / total bullets |
+| Evidenced but unused | High-value terms the evidence supports but this draft omits |
+| Not evidenced | Job terms never claimed because the ledger has no support |
+| Recommended fixes | Actions that do not require inventing data |
+
+Coverage deliberately excludes terms without evidence: a CV is never penalised for
+not claiming a skill the candidate does not have. The panel also states plainly that
+**knockout questions live on the application form** and cannot be fixed by editing
+the CV. "What a parser roughly sees" shows the linear text layer behind the document.
+
 ### Layout verification
 
 After export, `services/layout_verification.py` measures the PDF with PyMuPDF and compares it with
@@ -1026,7 +1057,7 @@ Coverage includes:
 - all nine UI pages via Streamlit `AppTest`
 - a full end-to-end workflow: profile → plan → mocked scan → scoring → CV → tracker
 
-**Last verified in this environment:** `109 passed` in 40–47 s on Python 3.11.9, Windows, with
+**Last verified in this environment:** `117 passed` in about 40–45 s on Python 3.11.9, Windows, with
 LibreOffice installed at its standard path. OCR was not installed, so OCR-specific paths were not
 exercised here.
 

@@ -256,7 +256,9 @@ def export_docx(cv: TailoredCV, path: str | Path, *, template_path: str | None =
 
             for bullet in entry.bullets:
                 par = paragraph(STYLE_BULLET)
-                par.add_run("●\t")
+                # A standard round bullet parses more reliably than a decorative
+                # glyph; the master's spacing and indentation are unchanged.
+                par.add_run("•\t")
                 par.add_run(bullet.text)
                 set_spacing(par, line=BULLET_LINE_PT)
 
@@ -528,6 +530,18 @@ def _render_measured_pdf(cv: TailoredCV, path: Path, factor: float | None = None
     return str(path)
 
 
+def _has_text_layer(path: Path) -> bool | None:
+    """True/False for a readable PDF; None when the file cannot be opened."""
+    try:
+        import pymupdf
+
+        with pymupdf.open(str(path)) as document:
+            characters = sum(len(page.get_text("text")) for page in document)
+        return characters >= 20
+    except Exception:  # unreadable output is handled by the layout report
+        return None
+
+
 def export_pdf(cv: TailoredCV, path: str | Path, *, template_path: str | None = None,
                docx_path: str | Path | None = None) -> str:
     """Convert the DOCX when possible, otherwise draw the same measured layout."""
@@ -545,6 +559,11 @@ def export_pdf(cv: TailoredCV, path: str | Path, *, template_path: str | None = 
     else:
         converted = convert_docx_to_pdf(source, target)
     if converted is not None and converted.exists():
+        # Some conversion setups can emit an image-only or blank page. A CV must
+        # always carry a real text layer, so fall back to the measured renderer.
+        if _has_text_layer(Path(converted)) is False:
+            logger.warning("Converted PDF has no text layer; using the measured renderer")
+            return _render_measured_pdf(cv, target)
         PDF_SOURCES[str(target)] = "docx_conversion"
         return str(converted)
 

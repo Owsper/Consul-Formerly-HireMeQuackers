@@ -12,15 +12,23 @@ ${evidence_list}
 TARGET JOB
 ${job_json}
 
+KEYWORD TARGETS
+${keyword_targets}
+
+ATS RULES FOR 2026 (authoritative; check against these)
+${ats_rules}
+
 CHECK
 1. Does every factual claim have support in the ledger? List unsupported claims precisely.
 2. Is any academic or personal project presented as professional employment?
 3. Are dates, employers, titles and qualifications consistent with the profile?
 4. Is any metric invented or altered?
 5. Is any language proficiency inflated?
-6. Are contact details present and complete?
+6. Are contact details present and complete in the body (not a header/footer)?
 7. Is anything irrelevant to this job left in?
-8. Would an ATS parse this cleanly (standard headings, no tables, no images)?
+8. Would an ATS parse this cleanly: single column, standard headings, plain bullets, no tables, no images, no text boxes?
+9. Are must-have terms used naturally and only where evidence supports them? Do not ask for a term the candidate cannot evidence.
+10. Is there keyword stuffing, hidden text, generic AI phrasing or a keyword dump with no context?
 
 Return ONE JSON object:
 {
