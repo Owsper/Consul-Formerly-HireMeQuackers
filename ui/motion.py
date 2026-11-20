@@ -358,8 +358,7 @@ MOTION_CSS = r"""
 /* 69 */ [data-testid="stSidebar"] .stButton > button[kind="primary"]::before { transform-origin: center; animation: mGrowY .5s var(--m-spring) backwards; }
 /* 70 */ [data-testid="stSidebar"] .stButton > button[kind="primary"] { background-size: 200% 100% !important; animation: mSweep .6s var(--m-out) backwards; }
         @keyframes mSweep { from { background-position: 100% 0; } to { background-position: 0 0; } }
-/* 71 */ .consul-nav-label::before { display: inline-block; margin-right: 4px; transition: transform var(--m-mid) var(--m-out); transform-origin: left; }
-        [data-testid="stSidebarUserContent"]:hover .consul-nav-label::before { transform: scaleX(1.8); }
+/* 71  removed: nav group dash */
 /* 72 */ .consul-brandmark .mark { animation: mBreath 4s var(--m-io) infinite; }
         @keyframes mBreath { 50% { box-shadow: 0 6px 26px -2px color-mix(in srgb, var(--consul-accent) 80%, transparent), inset 0 1px 0 rgba(255,255,255,.35); } }
 /* 73 */ .consul-brandmark .mark { transition: transform .6s var(--m-spring); }

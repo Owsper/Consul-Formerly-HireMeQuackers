@@ -702,7 +702,6 @@ _CSS = Template(
         border-radius: 8px;
     }
     .consul-nav-label { text-transform: none; letter-spacing: .02em; font-family: var(--consul-mono); font-size: 11px; }
-    .consul-nav-label::before { content: "— "; color: var(--consul-accent); }
 
     /* Page header */
     .consul-page-head { position: relative; padding: 8px 0 28px; margin-bottom: 32px; overflow: hidden; }
