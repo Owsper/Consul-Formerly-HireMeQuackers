@@ -47,6 +47,9 @@ def main() -> None:
 
     theme.inject_css()
     page = render_sidebar()
+    from ui.motion import inject_motion
+
+    inject_motion(page)
 
     if not _database_ready():
         st.error("The database could not be opened. Check DATA_DIR permissions and reload.")
