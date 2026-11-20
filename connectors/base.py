@@ -56,6 +56,7 @@ class RequestStats:
     failed: int = 0
     error: str = ""
     rate_limited: bool = False
+    restricted: bool = False
 
 
 @dataclass
@@ -143,6 +144,7 @@ class HttpSession:
 
             if response.status_code in {401, 403}:
                 self.stats.failed += 1
+                self.stats.restricted = True
                 self.stats.error = f"HTTP {response.status_code} (restricted)"
                 response.raise_for_status()
             if response.status_code >= 500:
@@ -336,6 +338,8 @@ class BaseConnector:
             result.last_success = datetime.now(timezone.utc)
         elif stats.rate_limited:
             result.status = SourceHealth.RATE_LIMITED
+        elif stats.restricted:
+            result.status = SourceHealth.RESTRICTED
         else:
             result.status = SourceHealth.UNAVAILABLE
         return result
