@@ -23,7 +23,7 @@ for canonical, aliases in {
     "JavaScript": ["javascript", "js "],
     "TypeScript": ["typescript"],
     "Java": ["java "],
-    "C++": ["c++", "cpp"],
+    "C++": ["c++", "cpp", "c plus plus"],
     "C#": ["c#", ".net"],
     "Go": ["golang", " go "],
     "Rust": ["rust"],
@@ -91,7 +91,21 @@ for canonical, aliases in {
     "dbt": ["dbt"],
     "Snowflake": ["snowflake"],
     "Databricks": ["databricks"],
-    "SAP": [" sap ", "sap "],
+    "SAP": ["sap"],
+    "Software Architecture": ["software architecture", "system design"],
+    "RTOS": ["rtos", "freertos", "zephyr", "real-time operating system",
+             "real time operating system"],
+    "Microcontrollers": ["microcontroller", "microcontrollers", "mcu", "stm32", "esp32",
+                         "arduino", "raspberry pi pico"],
+    "Firmware": ["firmware", "bare metal", "bare-metal"],
+    "Embedded Systems": ["embedded systems", "embedded system", "embedded software",
+                         "embedded c", "embedded"],
+    "ARM": ["arm cortex", "arm"],
+    "UART": ["uart"],
+    "SPI": ["spi"],
+    "I2C": ["i2c", "i²c"],
+    "PLC": ["plc", "siemens tia portal", "tia portal"],
+    "CAN bus": ["can bus", "can-bus", "canopen"],
     "Salesforce": ["salesforce"],
     "Excel": ["excel"],
     "Machine Learning": ["machine learning", "ml "],
@@ -157,6 +171,20 @@ NICE_TO_HAVE = re.compile(r"(nice[- ]to[- ]have|preferred|bonus|plus|advantage|v
 
 BULLET_RE = re.compile(r"^\s*(?:[-•*·–]|\d+[.)])\s+")
 
+# A bare C token is a real language requirement but must not match the letter
+# inside ordinary words, "C++" or "C#".
+C_LANGUAGE_RE = re.compile(r"(?<![a-z0-9+#])c(?![a-z0-9+#])", re.I)
+
+
+def _alias_pattern(alias: str) -> re.Pattern:
+    """Token-aware alias match, so "go" no longer fires inside "Google"."""
+    return re.compile(rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])", re.I)
+
+
+_SKILL_PATTERNS: dict[str, list[re.Pattern]] = {}
+for _alias, _canonical in SKILL_VOCAB.items():
+    _SKILL_PATTERNS.setdefault(_canonical, []).append(_alias_pattern(_alias))
+
 
 def detect_language(text: str) -> str:
     blob = normalize_text(text)[:4000]
@@ -180,6 +208,7 @@ def _section_lines(description: str) -> tuple[list[str], list[str]]:
     responsibility_lines: list[str] = []
     current = None
     for line in lines:
+        is_bullet = bool(BULLET_RE.match(line))
         cleaned = re.sub(r"^[#*\-\s]+", "", line).strip(" :").strip()
         if cleaned and len(cleaned) <= 60:
             if REQUIREMENT_HEADERS.match(cleaned):
@@ -188,7 +217,10 @@ def _section_lines(description: str) -> tuple[list[str], list[str]]:
             if RESPONSIBILITY_HEADERS.match(cleaned):
                 current = "responsibilities"
                 continue
-            if cleaned.isupper() and len(cleaned.split()) <= 4:
+            # An all-caps bullet ("C", "SQL", "RTOS") is content, not a new
+            # section header. Resetting here used to drop every requirement
+            # after the first uppercase skill.
+            if cleaned.isupper() and len(cleaned.split()) <= 4 and not is_bullet:
                 current = None
         if current == "requirements" and line:
             requirement_lines.append(line)
@@ -201,16 +233,21 @@ def extract_skills(description: str, requirement_text: str = "") -> tuple[list[s
     blob = " " + normalize_text(description) + " "
     required_blob = " " + normalize_text(requirement_text) + " "
     found: dict[str, int] = {}
-    for alias, canonical in SKILL_VOCAB.items():
-        if alias in blob:
-            found[canonical] = found.get(canonical, 0) + blob.count(alias)
+    for canonical, patterns in _SKILL_PATTERNS.items():
+        hits = sum(len(pattern.findall(blob)) for pattern in patterns)
+        if hits:
+            found[canonical] = found.get(canonical, 0) + hits
+    if C_LANGUAGE_RE.search(blob):
+        found["C"] = found.get("C", 0) + len(C_LANGUAGE_RE.findall(blob))
     ordered = sorted(found, key=lambda k: (-found[k], k))
     required: list[str] = []
     preferred: list[str] = []
     for skill in ordered:
-        lowered = skill.lower()
-        alias_hits = [a for a, c in SKILL_VOCAB.items() if c == skill]
-        in_requirements = any(a in required_blob for a in alias_hits)
+        if skill == "C":
+            in_requirements = bool(C_LANGUAGE_RE.search(required_blob))
+        else:
+            in_requirements = any(pattern.search(required_blob)
+                                  for pattern in _SKILL_PATTERNS.get(skill, []))
         (required if in_requirements else preferred).append(skill)
     return required[:20], preferred[:20]
 
