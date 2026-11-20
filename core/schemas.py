@@ -205,6 +205,35 @@ class CandidateProfileData(_Lenient):
     additional: AdditionalInfo = Field(default_factory=AdditionalInfo)
     extra_sections: dict[str, list[str]] = Field(default_factory=dict)
 
+    @field_validator("extra_sections", mode="before")
+    @classmethod
+    def _coerce_extra_sections(cls, value: Any) -> dict[str, list[str]]:
+        """Models occasionally return a string or a scalar here; coerce it.
+
+        Rejecting it would cost a full retry (and, on metered plans, a whole
+        request), so a slightly loose value is normalised instead.
+        """
+        if value is None:
+            return {}
+        if isinstance(value, str):
+            return {"notes": [value]} if value.strip() else {}
+        if isinstance(value, list):
+            return {"notes": [str(v) for v in value if str(v).strip()]}
+        if not isinstance(value, dict):
+            return {}
+        out: dict[str, list[str]] = {}
+        for key, item in value.items():
+            name = str(key)
+            if item is None:
+                out[name] = []
+            elif isinstance(item, str):
+                out[name] = [item] if item.strip() else []
+            elif isinstance(item, list):
+                out[name] = [str(v) for v in item if str(v).strip()]
+            else:
+                out[name] = [str(item)]
+        return out
+
     def all_skills(self) -> list[str]:
         out: list[str] = []
         for group in self.skills:
