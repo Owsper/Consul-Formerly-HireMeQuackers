@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from core.text import normalize_string_list, normalize_whitespace
+from core.text import normalize_string_list, normalize_whitespace, skill_group_status
 
 
 def utcnow() -> datetime:
@@ -154,6 +154,9 @@ class ProjectEntry(_Lenient):
 
 class SkillCategory(_Lenient):
     name: str = ""
+    # "demonstrated" (default), "learning" or "interest". An empty value falls
+    # back to the group name, so "Currently learning" is recognised too.
+    proficiency: str = ""
     skills: list[str] = Field(default_factory=list)
 
     @field_validator("skills", mode="before")
@@ -249,14 +252,36 @@ class CandidateProfileData(_Lenient):
                 out[name] = [str(item)]
         return out
 
-    def all_skills(self) -> list[str]:
+    def _skills_by_status(self, status: str) -> list[str]:
         out: list[str] = []
         for group in self.skills:
+            if skill_group_status(group.name, group.proficiency) != status:
+                continue
             out.extend(group.skills)
-        for job in self.employment:
-            out.extend(job.technologies)
-        for project in self.projects:
-            out.extend(project.technologies)
+        return out
+
+    def demonstrated_skills(self) -> list[str]:
+        """Skills the candidate can actually stand behind.
+
+        An explicit learning/interest entry wins over an incidental mention in
+        another group or project: the candidate has told us they cannot yet
+        claim it.
+        """
+        excluded = {normalize_whitespace(skill).lower()
+                    for skill in [*self.learning_skills(), *self.interest_skills()]}
+        return [skill for skill in self._dedupe_skills(self._skills_by_status("demonstrated"))
+                if normalize_whitespace(skill).lower() not in excluded]
+
+    def learning_skills(self) -> list[str]:
+        """Skills the candidate is learning, not yet demonstrating."""
+        return self._dedupe_skills(self._skills_by_status("learning"))
+
+    def interest_skills(self) -> list[str]:
+        """Career interests recorded as skill groups (not qualifications)."""
+        return self._dedupe_skills(self._skills_by_status("interest"))
+
+    @staticmethod
+    def _dedupe_skills(out: list[str]) -> list[str]:
         seen, result = set(), []
         for skill in out:
             key = normalize_whitespace(skill).lower()
@@ -265,7 +290,22 @@ class CandidateProfileData(_Lenient):
                 result.append(normalize_whitespace(skill))
         return result
 
-    def searchable_text(self) -> str:
+    def all_skills(self) -> list[str]:
+        out: list[str] = []
+        for group in self.skills:
+            out.extend(group.skills)
+        for job in self.employment:
+            out.extend(job.technologies)
+        for project in self.projects:
+            out.extend(project.technologies)
+        return self._dedupe_skills(out)
+
+    def searchable_text(self, *, include_learning: bool = True) -> str:
+        """Text used for relevance matching.
+
+        ``include_learning=False`` is used by scoring: a skill the candidate is
+        learning must not read as demonstrated hands-on evidence.
+        """
         chunks = [self.personal.professional_title]
         chunks += [e.qualification + " " + e.subject for e in self.education]
         for job in self.employment:
@@ -273,7 +313,8 @@ class CandidateProfileData(_Lenient):
         for project in self.projects:
             chunks += [project.name, project.description, project.implementation,
                        project.measurable_results, *project.technologies]
-        chunks += self.all_skills()
+        skills = self.all_skills() if include_learning else self.demonstrated_skills()
+        chunks += skills
         chunks += [f"{l.language} {l.proficiency}" for l in self.additional.languages]
         return "\n".join(c for c in chunks if c)
 
@@ -440,6 +481,9 @@ class MatchResult(BaseModel):
     matching_skills: list[str] = Field(default_factory=list)
     transferable_skills: list[str] = Field(default_factory=list)
     transferability_notes: list[str] = Field(default_factory=list)
+    # Requirements the candidate lists as learning: surfaced separately, never
+    # counted as demonstrated or used as a CV claim.
+    learning_skills: list[str] = Field(default_factory=list)
     role_family: str = ""
     missing_required_skills: list[str] = Field(default_factory=list)
     preferred_skills_held: list[str] = Field(default_factory=list)
