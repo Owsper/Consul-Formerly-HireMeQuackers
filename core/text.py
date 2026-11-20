@@ -147,6 +147,37 @@ def slugify(text: str, max_length: int = 80) -> str:
     return text[:max_length].strip("-")
 
 
+# Words that mark a skill group as not (yet) demonstrated. They are matched
+# against group names and explicit proficiency values, never against individual
+# skill names.
+LEARNING_MARKERS = (
+    "currently learning", "learning", "in progress", "in-progress", "beginner",
+    "familiar", "getting started", "to learn", "studying", "training", "novice",
+)
+INTEREST_MARKERS = (
+    "interest", "interests", "aspiring", "exploring", "curious", "want to learn",
+)
+SKILL_STATUSES = ("demonstrated", "learning", "interest")
+
+
+def skill_group_status(name: str, proficiency: str = "") -> str:
+    """Classify a skill group as demonstrated, learning or interest.
+
+    An explicit value wins. Otherwise a group name such as "Currently learning"
+    or "Professional interests" is honoured, so a candidate learning C or C++
+    is never scored as if those languages were demonstrated.
+    """
+    explicit = normalize_text(proficiency)
+    if explicit in SKILL_STATUSES:
+        return explicit
+    label = normalize_text(name)
+    if any(marker in label for marker in LEARNING_MARKERS):
+        return "learning"
+    if any(marker in label for marker in INTEREST_MARKERS):
+        return "interest"
+    return "demonstrated"
+
+
 def canonical_skill(skill: str) -> str:
     key = normalize_text(skill).strip(" .,;:")
     key = re.sub(r"\s+", " ", key)
