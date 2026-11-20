@@ -27,6 +27,17 @@ class LLMUnavailableError(consulError):
     code = "llm_unavailable"
 
 
+class LLMOverloadedError(LLMUnavailableError):
+    """The provider is rate limited or at capacity (HTTP 429/5xx).
+
+    Separate from a hard failure because it is worth retrying after a pause,
+    and because callers can tell the user "try again shortly" instead of
+    treating the provider as misconfigured.
+    """
+
+    code = "llm_overloaded"
+
+
 class LLMResponseError(consulError):
     """Raised when the LLM returns something that cannot be validated."""
 
