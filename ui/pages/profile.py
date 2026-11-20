@@ -7,7 +7,7 @@ import streamlit as st
 
 from config import get_settings
 from core.database import session_scope
-from core.exceptions import consulError
+from core.exceptions import LLMOverloadedError, consulError
 from core.schemas import (
     CandidateProfileData, Certification, EducationEntry, EmploymentEntry, EvidenceItem,
     EvidenceStatus, LanguageEntry, ProjectEntry, SkillCategory,
@@ -138,8 +138,9 @@ def _render_start() -> None:
 
         if not get_settings().llm_available:
             st.info(
-                "Structured extraction needs a Gemini API key. Without one, upload extracts the raw "
-                "text and you can enter the structured profile manually — no data is invented."
+                "Structured extraction needs an LLM key (GEMINI_API_KEY, or LLM_PROVIDER + "
+                "LLM_API_KEY). Without one, upload extracts the raw text and you can enter the "
+                "structured profile manually — no data is invented."
             )
 
     with manual_tab:
@@ -187,9 +188,16 @@ def _extract_upload(data: bytes, filename: str) -> None:
                      message="Text extracted. The LLM is not configured, so the structured fields are blank "
                              "except contact details found verbatim in the document.")
         st.rerun()
-    with st.spinner("Structuring the document with Gemini…"):
+    with st.spinner("Structuring the document with the LLM…"):
         try:
             data, evidence = structured_extraction(result.text, filename)
+        except LLMOverloadedError as exc:
+            st.warning(
+                f"{exc.message}"
+                "\n\nThe extracted text is kept below, so nothing is lost. Wait a moment "
+                "and press the button again, or start the profile from the text."
+            )
+            return
         except consulError as exc:
             st.error(f"{exc.message} You can still enter the profile manually.")
             return
@@ -605,7 +613,8 @@ def _render_merge() -> None:
     uploaded = st.file_uploader("Additional PDF/DOCX", type=["pdf", "docx"], key="gt_merge_file")
     if uploaded is not None and st.button("Extract and merge"):
         if not get_settings().llm_available:
-            st.warning("Merging needs the Gemini LLM. Configure GEMINI_API_KEY, or paste the facts manually.")
+            st.warning("Merging needs an LLM. Configure GEMINI_API_KEY (or LLM_PROVIDER + "
+                       "LLM_API_KEY), or paste the facts manually.")
             return
         with st.spinner("Extracting and merging…"):
             try:
@@ -619,6 +628,8 @@ def _render_merge() -> None:
                              raw=st.session_state.get("gt_raw", ""),
                              message=f"Merged {uploaded.name}. Review the new entries and evidence.")
                 st.rerun()
+            except LLMOverloadedError as exc:
+                st.warning(f"{exc.message} Nothing was merged; try again shortly.")
             except consulError as exc:
                 st.error(exc.message)
             except Exception as exc:  # pragma: no cover
