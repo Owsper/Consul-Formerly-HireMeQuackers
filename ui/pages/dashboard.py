@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 import streamlit as st
 
 from core.database import session_scope
@@ -35,60 +37,72 @@ def render() -> None:
         follow_ups = [(a, to_record(a)) for a in upcoming_items["follow_ups"]]
         interviews = [(a, to_record(a)) for a in upcoming_items["interviews"]]
 
+    steps = [
+        ("Approve your Ground Truth CV", "The evidence every score is checked against",
+         bool(profile_payload)),
+        ("Configure search preferences", "Roles, countries, languages and deal-breakers",
+         bool(has_prefs)),
+        ("Enable at least one source", "Job boards and company career pages",
+         any(s["enabled"] and s["configured"] for s in catalog)),
+        ("Run your first scan", "Real requests only, nothing invented",
+         stats["total_jobs"] > 0),
+        ("Track an application", "Notes, dates and follow-ups in one place",
+         stats["applications"] > 0),
+    ]
+    done = sum(1 for *_, d in steps if d)
+    strong = stats["strong"] + stats["excellent"]
+
     st.markdown(
         f"""
         <div class="consul-hero">
-            <div class="consul-eyebrow">Dashboard</div>
-            <h1 style="margin:0 0 12px 0;">Roles scored against what your CV can prove</h1>
-            <p style="margin:0; font-size:17px; line-height:1.55;">
-                Evidence-backed matching, multilingual discovery and CVs that only claim what you can prove
-            </p>
-            <div class="consul-hero-note">
-                {stats["total_jobs"]} roles discovered · {stats["strong"] + stats["excellent"]} strong matches · {stats["saved"]} shortlisted
+            <div class="consul-hero-copy">
+                <div class="consul-eyebrow">Dashboard</div>
+                <h1>Roles scored against what your CV can prove</h1>
+                <p>Evidence-backed matching, multilingual discovery and tailored CVs that never
+                claim more than your record shows</p>
+                <div class="consul-hero-chips">
+                    <span><b>{stats["total_jobs"]}</b> discovered</span>
+                    <span><b>{strong}</b> strong matches</span>
+                    <span><b>{stats["saved"]}</b> shortlisted</span>
+                </div>
             </div>
+            {c.readiness_dial(100 * done / len(steps), done, len(steps))}
         </div>
         """,
         unsafe_allow_html=True,
     )
-    st.write("")
 
-    # Three headline figures; the full funnel lives in the pipeline below.
-    cols = st.columns(3)
-    metrics = [
-        ("Strong matches", stats["strong"] + stats["excellent"]),
-        ("Applications", stats["applications"]),
-        ("Interviews", stats["interviews"]),
+    tiles = [
+        ("Strong matches", strong, "excellent + strong fit", c.PAGE_ICONS["Job Discovery"]),
+        ("Shortlisted", stats["saved"], "saved for a closer look", c.PAGE_ICONS["Saved Jobs"]),
+        ("Applications", stats["applications"], "tracked end to end", c.PAGE_ICONS["Application Tracker"]),
+        ("Interviews", stats["interviews"], "scheduled or done", c.PAGE_ICONS["Application Tracker"]),
     ]
-    for col, (label, value) in zip(cols, metrics):
-        col.metric(label, value)
+    st.markdown(
+        '<div class="consul-stats">'
+        + "".join(c.stat_tile(l, v, h, i, ic) for i, (l, v, h, ic) in enumerate(tiles))
+        + "</div>",
+        unsafe_allow_html=True,
+    )
 
     c.pipeline([
         ("Discovered", stats["total_jobs"]),
-        ("Strong fit", stats["strong"] + stats["excellent"]),
+        ("Strong fit", strong),
         ("Shortlisted", stats["saved"]),
         ("Applications", stats["applications"]),
         ("Interviews", stats["interviews"]),
     ], note="live workspace")
 
     st.write("")
-    left, right = st.columns([1.55, 1])
+    left, right = st.columns([1.55, 1], gap="large")
 
     with left:
-        st.subheader("Next steps")
-        steps = [
-            ("Ground Truth profile approved", bool(profile_payload)),
-            ("Search preferences configured", bool(has_prefs)),
-            ("At least one source enabled", any(s["enabled"] and s["configured"] for s in catalog)),
-            ("Jobs discovered", stats["total_jobs"] > 0),
-            ("First application tracked", stats["applications"] > 0),
-        ]
-        for label, done in steps:
-            mark = "✓" if done else "○"
-            st.markdown(
-                f"<div class='consul-kv'><span>{mark} {c.esc(label)}</span>"
-                f"<span>{c.badge('Done' if done else 'Pending', 'success' if done else 'neutral')}</span></div>",
-                unsafe_allow_html=True,
-            )
+        st.markdown(
+            f'<div class="consul-section-head"><div class="t">Next steps</div>'
+            f'<div class="n">{done} of {len(steps)} complete</div></div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(c.stepper(steps), unsafe_allow_html=True)
         st.write("")
         b1, b2, b3 = st.columns(3)
         if b1.button("Open Ground Truth", use_container_width=True):
@@ -99,13 +113,13 @@ def render() -> None:
             go("discovery")
 
         st.write("")
-        st.subheader("Recently discovered")
+        st.markdown('<div class="consul-section-head"><div class="t">Recently discovered</div><div class="n">latest 5</div></div>', unsafe_allow_html=True)
         if not recent_data:
             c.empty_state(
                 "No jobs yet",
                 "Approve your profile, configure search preferences, then run a scan. "
                 "Only real results from real requests will appear here.",
-                mark="01",
+                mark="no scan",
             )
         else:
             for item in recent_data:
@@ -127,11 +141,14 @@ def render() -> None:
                 go("discovery")
 
     with right:
-        st.subheader("Upcoming")
+        st.markdown('<div class="consul-section-head"><div class="t">Upcoming</div><div class="n">next 14 days</div></div>', unsafe_allow_html=True)
         if not follow_ups and not interviews:
             st.markdown(
-                "<div class='consul-card'><div class='consul-muted' style='font-size:.86rem;'>"
-                "No follow-ups or interviews scheduled. Dates you add in the tracker show up here."
+                "<div class='consul-card consul-calendar-empty'>"
+                "<div class='consul-cal'><b>" + date.today().strftime('%d') + "</b><span>"
+                + date.today().strftime('%b') + "</span></div>"
+                "<div class='consul-muted' style='font-size:.86rem;'>"
+                "Nothing scheduled. Follow-up and interview dates you add in the tracker land here."
                 "</div></div>", unsafe_allow_html=True,
             )
         else:
@@ -151,7 +168,7 @@ def render() -> None:
                 )
 
         st.write("")
-        st.subheader("Search health")
+        st.markdown('<div class="consul-section-head"><div class="t">Search health</div><div class="n">sources</div></div>', unsafe_allow_html=True)
         configured = [s for s in catalog if s["configured"]]
         enabled = [s for s in configured if s["enabled"]]
         st.markdown(

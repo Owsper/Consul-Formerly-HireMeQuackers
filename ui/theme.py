@@ -652,6 +652,112 @@ _CSS = Template(
         .consul-cv { padding: 20px; }
         .consul-pipeline-row { grid-template-columns: 96px 1fr 40px; }
     }
+    /* ==== Workspace components (redesign patch, unslop treatment) ===== */
+    [data-testid="stSidebar"] .stButton > button { gap: 10px; }
+    [data-testid="stSidebar"] .stButton > button [data-testid="stIconMaterial"] {
+        font-size: 18px; color: var(--consul-muted);
+        transition: color .15s var(--consul-ease);
+    }
+    [data-testid="stSidebar"] .stButton > button:hover [data-testid="stIconMaterial"],
+    [data-testid="stSidebar"] .stButton > button[kind="primary"] [data-testid="stIconMaterial"] { color: var(--consul-text); }
+
+    /* Page header with icon */
+    .consul-page-head-row { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+    .consul-page-icon {
+        width: 40px; height: 40px; flex: 0 0 40px; border-radius: var(--consul-r);
+        display: grid; place-items: center; color: var(--consul-secondary);
+        background: var(--consul-surface-alt); border: 1px solid var(--consul-border);
+    }
+    .consul-page-head .consul-eyebrow { margin-bottom: 4px; }
+    .consul-page-head .consul-page-title { margin: 0; }
+
+    /* Hero with readiness dial */
+    .consul-hero { display: grid; grid-template-columns: minmax(0, 1fr) 184px; gap: 32px; align-items: center; }
+    .consul-hero h1 { margin: 0 0 12px 0 !important; }
+    .consul-hero p { font-size: 17px; line-height: 1.55; margin: 0 !important; }
+    .consul-hero-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+    .consul-hero-chips span {
+        font-family: var(--consul-mono); font-size: 12px; color: var(--consul-secondary);
+        padding: 4px 10px; border-radius: var(--consul-r-sm);
+        background: var(--consul-surface-alt); border: 1px solid var(--consul-border);
+        font-variant-numeric: tabular-nums;
+    }
+    .consul-hero-chips b { color: var(--consul-text); font-weight: 500; margin-right: 4px; }
+    .consul-dial { position: relative; width: 184px; height: 184px; justify-self: end; }
+    .consul-dial svg { width: 100%; height: 100%; transform: rotate(-90deg); overflow: visible; }
+    .consul-dial-ticks line { stroke: var(--consul-text); stroke-opacity: .1; stroke-width: 1; }
+    .consul-dial-track { fill: none; stroke: var(--consul-border-strong); stroke-width: 8; }
+    .consul-dial-fill { fill: none; stroke: var(--consul-accent); stroke-width: 8; stroke-linecap: round; }
+    .consul-dial-center { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; }
+    .consul-dial-center b { font-family: var(--consul-mono); font-size: 40px; font-weight: 500; line-height: 1; color: var(--consul-text); font-variant-numeric: tabular-nums; }
+    .consul-dial-center b small { font-size: 16px; color: var(--consul-muted); margin-left: 2px; }
+    .consul-dial-center span { font-family: var(--consul-mono); font-size: 12px; color: var(--consul-muted); margin-top: 6px; }
+
+    /* Stat tiles: numbers only */
+    .consul-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-top: 16px; }
+    .consul-stat {
+        padding: 20px; border-radius: var(--consul-r-card);
+        background: var(--consul-surface); border: 1px solid var(--consul-border);
+    }
+    .consul-stat-top { color: var(--consul-secondary); font-size: 14px; }
+    .consul-stat-value { font-family: var(--consul-mono); font-size: 30px; font-weight: 500; line-height: 1; margin: 12px 0 8px; color: var(--consul-text); font-variant-numeric: tabular-nums; }
+    .consul-stat-hint { font-family: var(--consul-mono); font-size: 12px; color: var(--consul-muted); }
+
+    /* Section heads */
+    .consul-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 8px 0 12px; }
+    .consul-section-head .t { font-size: 20px; font-weight: 500; color: var(--consul-text); }
+    .consul-section-head .n { font-family: var(--consul-mono); font-size: 12px; color: var(--consul-muted); }
+
+    /* Stepper */
+    .consul-stepper { list-style: none; margin: 0 0 16px; padding: 0; position: relative; }
+    .consul-stepper::before {
+        content: ""; position: absolute; left: 17px; top: 20px; bottom: 20px; width: 1px;
+        background: var(--consul-border-strong);
+    }
+    .consul-step {
+        position: relative; display: grid; grid-template-columns: 36px 1fr auto; gap: 12px; align-items: center;
+        padding: 8px 12px 8px 0; margin: 0 0 4px; border-radius: var(--consul-r);
+    }
+    .consul-step-mark {
+        width: 36px; height: 36px; border-radius: var(--consul-r); display: grid; place-items: center;
+        position: relative; z-index: 1;
+        font-family: var(--consul-mono); font-size: 12px; color: var(--consul-muted);
+        background: var(--consul-surface); border: 1px solid var(--consul-border-strong);
+    }
+    .consul-step-body b { display: block; font-size: 15px; font-weight: 500; color: var(--consul-text); }
+    .consul-step-body span { display: block; font-size: 13px; color: var(--consul-muted); margin-top: 2px; }
+    .consul-step-tag { font-family: var(--consul-mono); font-size: 12px; color: var(--consul-muted); padding: 2px 8px; border-radius: var(--consul-r-sm); border: 1px solid var(--consul-border); }
+    .consul-step.done .consul-step-mark { background: var(--consul-success-soft); border-color: var(--consul-border); color: var(--consul-success); }
+    .consul-step.done .consul-step-body b { color: var(--consul-secondary); }
+    .consul-step.done .consul-step-tag { color: var(--consul-success); }
+    .consul-step.next { background: var(--consul-surface-alt); }
+    .consul-step.next .consul-step-mark { background: var(--consul-accent); border-color: var(--consul-accent); color: var(--consul-on-accent); }
+    .consul-step.next .consul-step-tag { color: var(--consul-text); border-color: var(--consul-border-strong); }
+
+    /* Upcoming calendar */
+    .consul-calendar-empty { display: flex; gap: 16px; align-items: center; }
+    .consul-cal {
+        flex: 0 0 48px; height: 56px; border-radius: var(--consul-r); overflow: hidden; text-align: center;
+        border: 1px solid var(--consul-border-strong); background: var(--consul-surface-alt);
+        display: flex; flex-direction: column;
+    }
+    .consul-cal span { order: -1; border-bottom: 1px solid var(--consul-border); color: var(--consul-muted); font-family: var(--consul-mono); font-size: 11px; padding: 2px 0; }
+    .consul-cal b { font-family: var(--consul-mono); font-size: 22px; font-weight: 500; line-height: 32px; color: var(--consul-text); }
+
+    /* Empty state with paper stack */
+    .consul-empty { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 24px; align-items: center; text-align: left; padding: 24px 32px; margin-bottom: 16px; }
+    .consul-empty-art { width: 160px; height: 110px; color: var(--consul-text); }
+    .consul-empty h3 { margin: 0 0 8px !important; }
+    .consul-empty p { margin: 0 !important; }
+
+    @media (max-width: 1100px) {
+        .consul-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .consul-hero { grid-template-columns: 1fr; }
+        .consul-dial { justify-self: start; width: 144px; height: 144px; }
+    }
+    @media (max-width: 820px) {
+        .consul-empty { grid-template-columns: 1fr; padding: 24px; }
+    }
     @media (prefers-reduced-motion: reduce) {
         *, *::before, *::after {
             animation-duration: .01ms !important;

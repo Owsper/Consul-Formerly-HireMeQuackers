@@ -20,6 +20,18 @@ PAGES: list[tuple[str, str, str]] = [
 
 PAGE_LABEL = {key: label for key, label, _ in PAGES}
 
+NAV_ICONS = {
+    "dashboard": ":material/space_dashboard:",
+    "profile": ":material/badge:",
+    "discovery": ":material/travel_explore:",
+    "configuration": ":material/tune:",
+    "saved": ":material/bookmark:",
+    "cv_studio": ":material/edit_document:",
+    "tracker": ":material/view_kanban:",
+    "diagnostics": ":material/monitor_heart:",
+    "settings": ":material/settings:",
+}
+
 NAV_GROUPS: list[tuple[str, list[str]]] = [
     ("Workspace", ["dashboard"]),
     ("Find work", ["profile", "discovery", "configuration", "saved"]),
@@ -52,6 +64,7 @@ def render_sidebar() -> str:
             if st.sidebar.button(
                 label,
                 key=f"nav_{key}",
+                icon=NAV_ICONS.get(key),
                 use_container_width=True,
                 type="primary" if key == current else "secondary",
             ):

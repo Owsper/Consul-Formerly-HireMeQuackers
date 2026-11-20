@@ -42,15 +42,38 @@ def esc(text: object) -> str:
     return html.escape(str(text or ""))
 
 
+PAGE_ICONS = {
+    "Dashboard": "M3 13h8V3H3zm0 8h8v-6H3zm10 0h8V11h-8zm0-18v6h8V3z",
+    "Ground Truth CV": "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zm-1 7V3.5L18.5 9zM8 13h8v2H8zm0 4h5v2H8z",
+    "Job Discovery": "M15.5 14h-.8l-.3-.3A6.5 6.5 0 1 0 14 15.5l.3.3v.8l5 5 1.5-1.5zm-6 0a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9z",
+    "Search Configuration": "M3 17v2h6v-2zM3 5v2h10V5zm10 16v-2h8v-2h-8v-2h-2v6zM7 9v2H3v2h4v2h2V9zm14 4v-2H11v2zm-6-4h2V7h4V5h-4V3h-2z",
+    "Saved Jobs": "M17 3H7a2 2 0 0 0-2 2v16l7-3 7 3V5a2 2 0 0 0-2-2z",
+    "CV Studio": "M3 17.25V21h3.75L17.8 9.94l-3.75-3.75zM20.7 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75z",
+    "Application Tracker": "M19 3h-4.2A3 3 0 0 0 12 1a3 3 0 0 0-2.8 2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm-9 14-4-4 1.4-1.4 2.6 2.6 6.6-6.6L18 9z",
+    "Search Diagnostics": "M3.5 18.5 9.5 12.5l4 4L22 6.9 20.6 5.5l-7.1 8-4-4L2 17z",
+    "Settings": "M19.4 13a7.5 7.5 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7 7 0 0 0-1.7-1L15 3h-4l-.4 2.7a7 7 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.5 7.5 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a7 7 0 0 0 1.7 1L11 21h4l.4-2.7a7 7 0 0 0 1.7-1l2.5 1 2-3.5zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z",
+}
+
+
+def icon_svg(path: str, size: int = 20) -> str:
+    return (f'<svg viewBox="0 0 24 24" width="{size}" height="{size}" aria-hidden="true">'
+            f'<path fill="currentColor" d="{path}"/></svg>')
+
+
 def page_header(title: str, subtitle: str = "", *, kicker: str | None = None) -> None:
     eyebrow = kicker or PAGE_KICKERS.get(title, "consul workspace")
     # A one-sentence subhead reads as a label, so it drops the trailing period.
     if subtitle.endswith(".") and ". " not in subtitle:
         subtitle = subtitle[:-1]
+    icon = PAGE_ICONS.get(title, PAGE_ICONS["Dashboard"])
     st.markdown(
         '<div class="consul-page-head">'
+        '<div class="consul-page-head-row">'
+        f'<div class="consul-page-icon">{icon_svg(icon, 20)}</div>'
+        '<div>'
         f'<div class="consul-eyebrow">consul / {esc(eyebrow)}</div>'
         f'<div class="consul-page-title">{esc(title)}</div>'
+        '</div></div>'
         f'<div class="consul-page-sub">{esc(subtitle)}</div>'
         '</div>',
         unsafe_allow_html=True,
@@ -103,16 +126,85 @@ def pipeline(rows: list[tuple[str, int]], *, title: str = "Search pipeline",
     )
 
 
+_EMPTY_ART = """
+<svg class="consul-empty-art" viewBox="0 0 220 150" aria-hidden="true">
+  <g class="sheet s3"><rect x="70" y="22" width="92" height="116" rx="6" fill="currentColor" fill-opacity=".03" stroke="currentColor" stroke-opacity=".14"/></g>
+  <g class="sheet s2"><rect x="58" y="16" width="92" height="116" rx="6" fill="currentColor" fill-opacity=".04" stroke="currentColor" stroke-opacity=".2"/></g>
+  <g class="sheet s1">
+    <rect x="46" y="10" width="92" height="116" rx="6" style="fill:var(--consul-surface-alt)" stroke="currentColor" stroke-opacity=".28"/>
+    <rect x="60" y="26" width="40" height="6" rx="3" fill="currentColor" opacity=".55"/>
+    <rect x="60" y="42" width="64" height="4" rx="2" fill="currentColor" opacity=".22"/>
+    <rect x="60" y="52" width="56" height="4" rx="2" fill="currentColor" opacity=".22"/>
+    <rect x="60" y="62" width="60" height="4" rx="2" fill="currentColor" opacity=".22"/>
+    <rect x="60" y="78" width="36" height="4" rx="2" fill="currentColor" opacity=".22"/>
+    <rect x="60" y="88" width="48" height="4" rx="2" fill="currentColor" opacity=".22"/>
+  </g>
+  <g class="stamp" transform="rotate(-12 150 100)">
+    <rect x="112" y="84" width="82" height="30" rx="4" fill="none" style="stroke:var(--consul-muted)" stroke-width="1.5" stroke-dasharray="4 3"/>
+    <text x="153" y="103" text-anchor="middle" font-family="Geist Mono, monospace" font-size="12" style="fill:var(--consul-muted)">$MARK</text>
+  </g>
+</svg>
+"""
+
+
 def empty_state(title: str, body: str, *, mark: str = "C") -> None:
+    label = mark if len(mark) > 2 else "pending"
+    art = _EMPTY_ART.replace("$MARK", esc(label.lower()[:10]))
     st.markdown(
-        f"""
-        <div class="consul-empty">
-            <div class="consul-empty-mark">{esc(mark)}</div>
-            <h3>{esc(title)}</h3>
-            <p>{esc(body)}</p>
-        </div>
-        """,
+        f"""<div class="consul-empty">{art}<div class="consul-empty-copy"><h3>{esc(title)}</h3><p>{esc(body)}</p></div></div>""",
         unsafe_allow_html=True,
+    )
+
+
+def readiness_dial(percent: float, done: int, total: int) -> str:
+    """SVG ring that shows how far the workspace setup has progressed."""
+    pct = max(0.0, min(100.0, percent))
+    r = 64
+    circ = 2 * 3.14159 * r
+    off = circ * (1 - pct / 100)
+    ticks = "".join(
+        f'<line x1="90" y1="8" x2="90" y2="{14 if i % 5 else 18}" '
+        f'transform="rotate({i * 6} 90 90)" />'
+        for i in range(60)
+    )
+    return (
+        '<div class="consul-dial">'
+        '<svg viewBox="0 0 180 180" aria-hidden="true">'
+        f'<g class="consul-dial-ticks">{ticks}</g>'
+        f'<circle cx="90" cy="90" r="{r}" class="consul-dial-track"/>'
+        f'<circle cx="90" cy="90" r="{r}" class="consul-dial-fill" '
+        f'style="stroke-dasharray:{circ:.1f};stroke-dashoffset:{off:.1f};--dial-from:{circ:.1f}"/>'
+        '</svg>'
+        f'<div class="consul-dial-center"><b>{pct:.0f}<small>%</small></b>'
+        f'<span>setup · {done}/{total}</span></div>'
+        '</div>'
+    )
+
+
+def stepper(steps: list[tuple[str, str, bool]]) -> str:
+    items = []
+    first_open = next((i for i, (_, _, d) in enumerate(steps) if not d), None)
+    for i, (label, hint, done) in enumerate(steps):
+        state = "done" if done else ("next" if i == first_open else "todo")
+        marker = "&#10003;" if done else f"{i + 1:02d}"
+        items.append(
+            f'<li class="consul-step {state}">'
+            f'<div class="consul-step-mark">{marker}</div>'
+            f'<div class="consul-step-body"><b>{esc(label)}</b><span>{esc(hint)}</span></div>'
+            f'<div class="consul-step-tag">{"done" if done else ("up next" if state == "next" else "pending")}</div>'
+            '</li>'
+        )
+    return '<ol class="consul-stepper">' + "".join(items) + "</ol>"
+
+
+def stat_tile(label: str, value: int | str, hint: str, index: int = 0, icon: str = "") -> str:
+    # Stat cards are numbers only; index and icon stay for call compatibility.
+    return (
+        '<div class="consul-stat">'
+        f'<div class="consul-stat-top"><span>{esc(label)}</span></div>'
+        f'<div class="consul-stat-value">{esc(str(value))}</div>'
+        f'<div class="consul-stat-hint">{esc(hint)}</div>'
+        '</div>'
     )
 
 
