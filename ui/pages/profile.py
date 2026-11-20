@@ -12,6 +12,7 @@ from core.schemas import (
     CandidateProfileData, Certification, EducationEntry, EmploymentEntry, EvidenceItem,
     EvidenceStatus, LanguageEntry, ProjectEntry, SkillCategory,
 )
+from core.text import normalize_string_list
 from services.cv_extraction import extract_document, heuristic_hints, structured_extraction
 from services.profile_service import (
     get_active_profile, list_profiles, merge_profiles, restore_version, save_profile,
@@ -51,8 +52,8 @@ def _lines(value: str) -> list[str]:
             if line.strip(" -•\t")]
 
 
-def _csv(value: str) -> list[str]:
-    return [part.strip() for part in str(value or "").replace(";", ",").split(",") if part.strip()]
+def _csv(value: object) -> list[str]:
+    return normalize_string_list(value)
 
 
 def _editor_rows(items: list[dict], columns: dict[str, str]) -> pd.DataFrame:
@@ -63,6 +64,8 @@ def _editor_rows(items: list[dict], columns: dict[str, str]) -> pd.DataFrame:
             value = item.get(field, "")
             if kind == "list":
                 row[field] = "\n".join(value or []) if isinstance(value, list) else str(value or "")
+            elif kind == "csv":
+                row[field] = ", ".join(normalize_string_list(value))
             elif kind == "bool":
                 row[field] = bool(value)
             else:
