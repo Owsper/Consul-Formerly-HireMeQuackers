@@ -56,10 +56,10 @@ def render() -> None:
         f"""
         <div class="consul-hero">
             <div class="consul-hero-copy">
-                <div class="consul-eyebrow">Dashboard</div>
-                <h1>Roles scored against what your CV can prove</h1>
+                <div class="consul-eyebrow">consul <i>/</i> overview <i>/</i> 01</div>
+                <h1>Roles scored against what your CV can <em>prove</em></h1>
                 <p>Evidence-backed matching, multilingual discovery and tailored CVs that never
-                claim more than your record shows</p>
+                claim more than your record shows.</p>
                 <div class="consul-hero-chips">
                     <span><b>{stats["total_jobs"]}</b> discovered</span>
                     <span><b>{strong}</b> strong matches</span>
@@ -76,7 +76,7 @@ def render() -> None:
         ("Strong matches", strong, "excellent + strong fit", c.PAGE_ICONS["Job Discovery"]),
         ("Shortlisted", stats["saved"], "saved for a closer look", c.PAGE_ICONS["Saved Jobs"]),
         ("Applications", stats["applications"], "tracked end to end", c.PAGE_ICONS["Application Tracker"]),
-        ("Interviews", stats["interviews"], "scheduled or done", c.PAGE_ICONS["Application Tracker"]),
+        ("Interviews", stats["interviews"], "scheduled or done", c.PAGE_ICONS["CV Studio"]),
     ]
     st.markdown(
         '<div class="consul-stats">'
@@ -98,8 +98,8 @@ def render() -> None:
 
     with left:
         st.markdown(
-            f'<div class="consul-section-head"><div class="t">Next steps</div>'
-            f'<div class="n">{done} of {len(steps)} complete</div></div>',
+            f'<div class="consul-section-head"><h3>Next steps</h3>'
+            f'<span>{done} of {len(steps)} complete</span></div>',
             unsafe_allow_html=True,
         )
         st.markdown(c.stepper(steps), unsafe_allow_html=True)
@@ -119,7 +119,7 @@ def render() -> None:
                 "No jobs yet",
                 "Approve your profile, configure search preferences, then run a scan. "
                 "Only real results from real requests will appear here.",
-                mark="no scan",
+                mark="NO SCAN",
             )
         else:
             for item in recent_data:

@@ -55,6 +55,14 @@ PAGE_ICONS = {
 }
 
 
+def _page_index(title: str) -> str:
+    from ui.nav import PAGES
+    for i, (_, label, _) in enumerate(PAGES, 1):
+        if label == title:
+            return f"{i:02d}"
+    return "··"
+
+
 def icon_svg(path: str, size: int = 20) -> str:
     return (f'<svg viewBox="0 0 24 24" width="{size}" height="{size}" aria-hidden="true">'
             f'<path fill="currentColor" d="{path}"/></svg>')
@@ -65,13 +73,15 @@ def page_header(title: str, subtitle: str = "", *, kicker: str | None = None) ->
     # A one-sentence subhead reads as a label, so it drops the trailing period.
     if subtitle.endswith(".") and ". " not in subtitle:
         subtitle = subtitle[:-1]
+    index = _page_index(title)
     icon = PAGE_ICONS.get(title, PAGE_ICONS["Dashboard"])
     st.markdown(
         '<div class="consul-page-head">'
+        f'<div class="consul-page-index" aria-hidden="true">{index}</div>'
         '<div class="consul-page-head-row">'
-        f'<div class="consul-page-icon">{icon_svg(icon, 20)}</div>'
+        f'<div class="consul-page-icon">{icon_svg(icon, 22)}</div>'
         '<div>'
-        f'<div class="consul-eyebrow">consul / {esc(eyebrow)}</div>'
+        f'<div class="consul-eyebrow">consul <i>/</i> {esc(eyebrow)} <i>/</i> {index}</div>'
         f'<div class="consul-page-title">{esc(title)}</div>'
         '</div></div>'
         f'<div class="consul-page-sub">{esc(subtitle)}</div>'
@@ -105,11 +115,11 @@ def pipeline(rows: list[tuple[str, int]], *, title: str = "Search pipeline",
     """A compact HTML funnel that stays legible in both themes."""
     top = max([value for _, value in rows] or [1]) or 1
     body = []
-    for label, value in rows:
+    for n, (label, value) in enumerate(rows, 1):
         percent = max(0.0, min(100.0, 100 * value / top))
         body.append(
-            '<div class="consul-pipeline-row">'
-            f'<div class="consul-pipeline-label">{esc(label)}</div>'
+            f'<div class="consul-pipeline-row" style="--i:{n}">'
+            f'<div class="consul-pipeline-label"><i>{n:02d}</i>{esc(label)}</div>'
             f'<div class="consul-pipeline-track"><div class="consul-pipeline-fill" '
             f'style="width:{percent:.1f}%"></div></div>'
             f'<div class="consul-pipeline-value">{value}</div>'
@@ -128,10 +138,16 @@ def pipeline(rows: list[tuple[str, int]], *, title: str = "Search pipeline",
 
 _EMPTY_ART = """
 <svg class="consul-empty-art" viewBox="0 0 220 150" aria-hidden="true">
-  <g class="sheet s3"><rect x="70" y="22" width="92" height="116" rx="6" fill="currentColor" fill-opacity=".03" stroke="currentColor" stroke-opacity=".14"/></g>
-  <g class="sheet s2"><rect x="58" y="16" width="92" height="116" rx="6" fill="currentColor" fill-opacity=".04" stroke="currentColor" stroke-opacity=".2"/></g>
+  <defs>
+    <linearGradient id="ceg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="currentColor" stop-opacity=".16"/>
+      <stop offset="1" stop-color="currentColor" stop-opacity=".02"/>
+    </linearGradient>
+  </defs>
+  <g class="sheet s3"><rect x="70" y="22" width="92" height="116" rx="6" fill="url(#ceg)" stroke="currentColor" stroke-opacity=".18"/></g>
+  <g class="sheet s2"><rect x="58" y="16" width="92" height="116" rx="6" fill="url(#ceg)" stroke="currentColor" stroke-opacity=".24"/></g>
   <g class="sheet s1">
-    <rect x="46" y="10" width="92" height="116" rx="6" style="fill:var(--consul-surface-alt)" stroke="currentColor" stroke-opacity=".28"/>
+    <rect x="46" y="10" width="92" height="116" rx="6" fill="var(--consul-surface-alt)" stroke="currentColor" stroke-opacity=".32"/>
     <rect x="60" y="26" width="40" height="6" rx="3" fill="currentColor" opacity=".55"/>
     <rect x="60" y="42" width="64" height="4" rx="2" fill="currentColor" opacity=".22"/>
     <rect x="60" y="52" width="56" height="4" rx="2" fill="currentColor" opacity=".22"/>
@@ -140,16 +156,16 @@ _EMPTY_ART = """
     <rect x="60" y="88" width="48" height="4" rx="2" fill="currentColor" opacity=".22"/>
   </g>
   <g class="stamp" transform="rotate(-12 150 100)">
-    <rect x="112" y="84" width="82" height="30" rx="4" fill="none" style="stroke:var(--consul-muted)" stroke-width="1.5" stroke-dasharray="4 3"/>
-    <text x="153" y="103" text-anchor="middle" font-family="Geist Mono, monospace" font-size="12" style="fill:var(--consul-muted)">$MARK</text>
+    <rect x="112" y="84" width="82" height="30" rx="4" fill="none" stroke="var(--consul-accent)" stroke-width="2" stroke-dasharray="4 3"/>
+    <text x="153" y="104" text-anchor="middle" font-family="Geist Mono, monospace" font-size="11" fill="var(--consul-accent)" letter-spacing="1.5">$MARK</text>
   </g>
 </svg>
 """
 
 
 def empty_state(title: str, body: str, *, mark: str = "C") -> None:
-    label = mark if len(mark) > 2 else "pending"
-    art = _EMPTY_ART.replace("$MARK", esc(label.lower()[:10]))
+    label = mark if len(mark) > 2 else "PENDING"
+    art = _EMPTY_ART.replace("$MARK", esc(label.upper()[:8]))
     st.markdown(
         f"""<div class="consul-empty">{art}<div class="consul-empty-copy"><h3>{esc(title)}</h3><p>{esc(body)}</p></div></div>""",
         unsafe_allow_html=True,
@@ -197,11 +213,10 @@ def stepper(steps: list[tuple[str, str, bool]]) -> str:
     return '<ol class="consul-stepper">' + "".join(items) + "</ol>"
 
 
-def stat_tile(label: str, value: int | str, hint: str, index: int = 0, icon: str = "") -> str:
-    # Stat cards are numbers only; index and icon stay for call compatibility.
+def stat_tile(label: str, value: int | str, hint: str, index: int, icon: str) -> str:
     return (
-        '<div class="consul-stat">'
-        f'<div class="consul-stat-top"><span>{esc(label)}</span></div>'
+        f'<div class="consul-stat" style="--i:{index}">'
+        f'<div class="consul-stat-top"><span>{esc(label)}</span>{icon_svg(icon, 18)}</div>'
         f'<div class="consul-stat-value">{esc(str(value))}</div>'
         f'<div class="consul-stat-hint">{esc(hint)}</div>'
         '</div>'
