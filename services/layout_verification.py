@@ -88,8 +88,13 @@ def extract_metrics(path: str | Path) -> dict[str, Any]:
         column_x = _mode([s["x0"] for s in body_spans if s["x0"] > 100])
         dates_x = _mode([s["x0"] for s in body_spans if s["x0"] < 100])
         bullets = [s for s in spans if s["text"][:1] in {"●", "•"}]
+        images = sum(len(page.get_images(full=True)) for page in document)
+        characters = sum(len(s["text"]) for s in spans)
         return {
             "pages": document.page_count,
+            "characters": characters,
+            "images": images,
+            "file_size_kb": round(Path(path).stat().st_size / 1024, 1),
             "page_width": round(document[0].rect.width, 2),
             "page_height": round(document[0].rect.height, 2),
             "left_edge": round(min(s["x0"] for s in spans), 2) if spans else 0.0,
@@ -113,6 +118,14 @@ def extract_metrics(path: str | Path) -> dict[str, Any]:
 def _serif(fonts: list[str]) -> bool:
     blob = " ".join(fonts).lower()
     return any(name in blob for name in ("times", "liberation serif", "serif", "nimbus roman"))
+
+
+def _icon_fonts(fonts: list[str]) -> bool:
+    blob = " ".join(fonts).lower()
+    return any(name in blob for name in (
+        "wingdings", "webdings", "symbol", "fontawesome", "material icons",
+        "glyphicons", "icomoon",
+    ))
 
 
 def _check(name: str, passed: bool, detail: str) -> dict[str, Any]:
@@ -196,6 +209,28 @@ def compare_layout(generated_path: str | Path,
     checks.append(_check("section_rules", generated["rules"] >= 1
                          and generated["rule_width"] >= 400,
                          f"{generated['rules']} rule(s), widest {generated['rule_width']} pt"))
+
+    # ATS parse guarantees: a real text layer, no raster content and no icon fonts.
+    checks.append(_check(
+        "text_layer",
+        generated["characters"] >= 200,
+        f"{generated['characters']} extractable character(s)",
+    ))
+    checks.append(_check(
+        "no_embedded_images",
+        generated["images"] == 0,
+        f"{generated['images']} embedded image(s)",
+    ))
+    checks.append(_check(
+        "no_icon_fonts",
+        not _icon_fonts(generated["fonts"]),
+        f"fonts {', '.join(generated['fonts'][:4])}",
+    ))
+    checks.append(_check(
+        "file_size",
+        generated["file_size_kb"] <= 2500,
+        f"{generated['file_size_kb']} KB",
+    ))
 
     page_limit = (reference["pages"] + 1) if reference else 2
     checks.append(_check("page_count", generated["pages"] <= max(2, page_limit),
