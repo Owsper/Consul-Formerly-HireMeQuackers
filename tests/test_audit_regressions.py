@@ -244,3 +244,65 @@ def test_a_successful_scan_is_not_downgraded_by_a_blocked_listing():
     job = JobRecord(source="base", title="Backend Engineer")
     result = BaseConnector().finish(BaseConnector().new_result(), 0.0, stats, [job], 1)
     assert result.status == SourceHealth.HEALTHY
+
+
+# --- German-market internship search (non-EU student) -----------------------
+
+@pytest.mark.parametrize("text,expected", [
+    ("Wir bieten kein Visa-Sponsoring.", False),
+    ("Keine Visumsunterstützung möglich.", False),
+    ("Ohne Visa-Sponsoring.", False),
+    ("We offer visa sponsorship.", True),
+])
+def test_german_sponsorship_negations_are_not_silently_ignored(text, expected):
+    from services.job_enrichment import extract_sponsorship
+
+    assert extract_sponsorship(text) is expected
+
+
+@pytest.mark.parametrize("text,language", [
+    ("Sehr gute Deutschkenntnisse erforderlich", "German (b2)"),
+    ("Gute Deutschkenntnisse", "German (b1)"),
+    ("Deutschkenntnisse auf B2-Niveau", "German (b2)"),
+    ("Verhandlungssicheres Englisch", "English (c1)"),
+])
+def test_german_language_requirements_keep_their_level(text, language):
+    from services.job_enrichment import extract_languages
+
+    assert language in extract_languages(text)
+
+
+def test_very_good_german_is_not_satisfied_by_b1():
+    from core.schemas import CandidateProfileData, JobRecord, SearchPreferences
+    from services.job_enrichment import enrich_job
+    from services.job_scoring import score_record
+
+    job = enrich_job(JobRecord(source="manual", title="Praktikum Softwareentwicklung",
+                               country="Germany", city="Berlin", employment_type="internship",
+                               description="Dein Profil:\n- Sehr gute Deutschkenntnisse\n- Python"))
+    prefs = SearchPreferences(countries=["Germany"], employment_types=["internship"])
+    for level, expected in (("B1", 0.0), ("B2", 100.0)):
+        profile = CandidateProfileData.model_validate({
+            "additional": {"languages": [{"language": "German", "proficiency": level}]},
+            "work_authorization": {"residence_country": "Germany", "authorized_to_work": True},
+        })
+        match = score_record(job, profile, [], prefs)
+        languages = next(d for d in match.dimensions if d.name == "languages")
+        assert languages.score == expected
+
+
+def test_in_country_no_sponsorship_advert_is_surfaced_as_a_concern():
+    from core.schemas import CandidateProfileData, JobRecord, SearchPreferences
+    from services.job_enrichment import enrich_job
+    from services.job_scoring import score_record
+
+    job = enrich_job(JobRecord(source="manual", title="Praktikum Softwareentwicklung",
+                               country="Germany", city="Berlin", employment_type="internship",
+                               description="Aufgaben: Python.\nWir bieten kein Visa-Sponsoring."))
+    profile = CandidateProfileData.model_validate({
+        "work_authorization": {"residence_country": "Germany", "authorized_to_work": True,
+                               "sponsorship_required": True},
+    })
+    match = score_record(job, profile, [], SearchPreferences(countries=["Germany"],
+                                                             employment_types=["internship"]))
+    assert any("does not offer sponsorship" in c for c in match.eligibility.concerns)
