@@ -9,6 +9,7 @@ needed. IT is simply the first populated domain.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -73,6 +74,42 @@ def titles_for(key: str | None, specialisation: str = "", limit: int = 10) -> li
     return category.all_titles(specialisation)[:limit]
 
 
+# Words that describe seniority or the hiring vehicle rather than the discipline.
+_TITLE_NOISE = frozenset({
+    "intern", "internship", "internships", "junior", "senior", "graduate", "entry",
+    "level", "working", "student", "werkstudent", "praktikum", "praktikant", "trainee",
+    "engineer", "engineering", "developer", "development", "specialist", "software",
+    "role", "position", "m", "f", "d", "w", "h",
+})
+
+
+def _term_present(blob: str, term: str) -> bool:
+    """Phrase containment with token boundaries for short terms.
+
+    Without this, the single-letter skill "C" matched the c in "backend" and
+    every title looked like an embedded role.
+    """
+    needle = normalize_text(term)
+    if not needle:
+        return False
+    if len(needle) <= 3 and " " not in needle and not any(ch in needle for ch in "+#./"):
+        return re.search(rf"(?<![a-z0-9]){re.escape(needle)}(?![a-z0-9])", blob) is not None
+    return needle in blob
+
+
+def _stem(token: str) -> str:
+    """Very small stemmer for title comparison (engineering -> engineer)."""
+    for suffix in ("ings", "ing", "ers", "er", "s"):
+        if len(token) > len(suffix) + 3 and token.endswith(suffix):
+            return token[: -len(suffix)]
+    return token
+
+
+def _title_tokens(text: str) -> set[str]:
+    tokens = re.findall(r"[a-z0-9+#.]+", normalize_text(text))
+    return {_stem(token) for token in tokens if token not in _TITLE_NOISE and len(token) > 1}
+
+
 def detect_categories(text: str, skills: list[str] | None = None,
                       limit: int = 2) -> list[str]:
     """Rank categories by evidence in a free-text role or a skill list."""
@@ -83,13 +120,16 @@ def detect_categories(text: str, skills: list[str] | None = None,
     for category in CATEGORIES.values():
         score = 0.0
         for title in category.titles:
-            if normalize_text(title) in blob:
+            if _term_present(blob, title):
                 score += 4.0
-        for term in (*category.core_skills, *category.keywords):
-            if normalize_text(term) in blob:
+        for term in category.core_skills:
+            if len(normalize_text(term)) > 2 and _term_present(blob, term):
+                score += 1.0
+        for term in category.keywords:
+            if _term_present(blob, term):
                 score += 1.0
         for specialisation in category.specialisations:
-            if normalize_text(specialisation) in blob:
+            if _term_present(blob, specialisation):
                 score += 3.0
         if score:
             scored.append((score, category.key))
@@ -98,16 +138,49 @@ def detect_categories(text: str, skills: list[str] | None = None,
 
 
 def guess_from_title(title: str) -> str | None:
-    best = (0.0, None)
+    """Infer a discipline from a free-text title using token evidence.
+
+    Fuzzy whole-string similarity used to send "Backend Engineering Intern" to
+    Game Development because "Game Engineer" scored 0.564 against 0.558 for
+    "Backend Developer". Discipline words and role tokens are now compared
+    explicitly, and generic words such as "engineer" carry no weight.
+    """
     lowered = normalize_text(title)
+    if not lowered:
+        return None
+    core_tokens = _title_tokens(title)
+    best_score, best_key = 0.0, None
+    for category in CATEGORIES.values():
+        score = 0.0
+        for keyword in category.keywords:
+            if _term_present(lowered, keyword):
+                score += 4.0
+        for specialisation in category.specialisations:
+            if _term_present(lowered, specialisation):
+                score += 3.0
+        for skill in category.core_skills:
+            # A one-letter skill (C) is never a signal on its own.
+            if len(normalize_text(skill)) > 2 and _term_present(lowered, skill):
+                score += 2.0
+        # Score each shared role word once: counting the same "system" token
+        # separately for every title used to promote IT Support over a more
+        # plausible family.
+        category_tokens: set[str] = set()
+        for candidate in category.titles:
+            category_tokens |= _title_tokens(candidate)
+        shared = core_tokens & category_tokens
+        if shared:
+            score += 2.0 * len(shared) + (1.0 if len(shared) >= 2 else 0.0)
+        if score > best_score:
+            best_score, best_key = score, category.key
+    if best_key and best_score >= 3.0:
+        return best_key
+    # Last resort: near-identical titles only, never a loose 0.55 threshold.
     for category in CATEGORIES.values():
         for candidate in category.titles:
-            if normalize_text(candidate) in lowered or lowered in normalize_text(candidate):
+            if similarity(title, candidate) >= 0.86:
                 return category.key
-            score = similarity(title, candidate)
-            if score > best[0]:
-                best = (score, category.key)
-    return best[1] if best[0] >= 0.55 else None
+    return None
 
 
 def title_translations(category_key: str | None, language: str) -> tuple[str, ...]:
@@ -340,8 +413,8 @@ _category(
     "database_admin", "Database Administration",
     ("Database Administrator", "Database Engineer", "SQL Developer", "DBA",
      "Data Platform Administrator", "Database Reliability Engineer"),
-    {"Operations": ("Database Administrator", "DBA", "Database Reliability Engineer"),
-     "Development": ("SQL Developer", "Database Developer", "Database Engineer"),
+    {"Database Operations": ("Database Administrator", "DBA", "Database Reliability Engineer"),
+     "Database Development": ("SQL Developer", "Database Developer", "Database Engineer"),
      "Data Platform": ("Data Platform Administrator", "Data Platform Engineer")},
     ("SQL", "PostgreSQL", "MySQL", "Oracle", "SQL Server", "MongoDB", "Backup & Recovery", "Query Tuning"),
     ("database administration", "dba", "query optimisation", "backup", "replication", "data platform"),
