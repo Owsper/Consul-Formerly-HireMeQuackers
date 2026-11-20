@@ -55,7 +55,7 @@ The central rule is simple:
 | **Sources** | 13 connectors: nine ATS platforms, two aggregators, web search, generic career pages |
 | **Documents** | ATS-safe DOCX, PDF and TXT generated from a fixed master template |
 | **Privacy** | Local data only, redacting logs, SSRF protection, export/backup/delete controls |
-| **Tests** | 121 tests, all HTTP mocked; suite runs in about 40–70 seconds |
+| **Tests** | 144 tests, all HTTP mocked; suite runs in about 30–70 seconds |
 
 ### Design principles
 
@@ -171,7 +171,10 @@ The central rule is simple:
   achievements, technologies, quantified results
 - **projects** — name, description, team type, role, technologies, implementation, measurable
   results, dates, GitHub URL, verified achievements, and a `project`/`academic_project` label
-- **skills** — named skill groups
+- **skills** — named skill groups, each marked `demonstrated`, `learning` or `interest`
+  (a group name such as "Currently learning" is also respected). Learning and interest entries
+  broaden search planning but are never scored as demonstrated skills, counted in ATS keyword
+  coverage, or presented as proficiency in a CV.
 - **additional** — certifications, awards, publications, volunteering, languages, professional
   interests and free-form extras
 
@@ -1057,8 +1060,8 @@ Coverage includes:
 - all nine UI pages via Streamlit `AppTest`
 - a full end-to-end workflow: profile → plan → mocked scan → scoring → CV → tracker
 
-**Last verified in this environment:** `121 passed` in about 40–70 s on Python 3.11.9, Windows, with
-LibreOffice installed at its standard path. OCR was not installed, so OCR-specific paths were not
+**Last verified in this environment:** `144 passed` in about 27 s on Python 3.14.6, Windows, using
+the built-in measured PDF renderer. OCR was not installed, so OCR-specific paths were not
 exercised here.
 
 ---
