@@ -1,0 +1,22 @@
+You are analysing a job advert to build a requirement profile for CV tailoring.
+
+JOB DATA
+${job_json}
+
+TASK
+Extract what the employer actually asks for. Do not add requirements that are not in the advert.
+
+Return ONE JSON object:
+{
+  "role_summary": "1-2 sentences",
+  "required_skills": ["hard requirements only"],
+  "preferred_skills": ["nice to have"],
+  "responsibilities": ["..."],
+  "education_requirements": ["..."],
+  "experience_requirements": ["..."],
+  "language_requirements": ["..."],
+  "work_authorization_requirements": ["..."],
+  "ats_keywords": ["terms an ATS would look for, taken from the advert"],
+  "tone": "e.g. formal / startup-casual",
+  "seniority": "intern | working_student | entry | mid | senior | lead | unknown"
+}

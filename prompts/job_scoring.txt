@@ -1,0 +1,41 @@
+You are helping score how well a candidate matches a job. You are NOT the final decision maker: a deterministic engine combines your signals with explicit rules. Your job is to return evidence, not opinions without support.
+
+JOB
+${job_json}
+
+CANDIDATE GROUND TRUTH (verified facts and their evidence ids)
+${profile_json}
+
+EVIDENCE LEDGER (only these ids may be cited)
+${evidence_list}
+
+SCORING DIMENSIONS
+- technical_skills (weight 30)
+- experience_evidence (weight 20)
+- role_responsibilities (weight 15)
+- education (weight 10)
+- seniority (weight 10)
+- location_preferences (weight 5)
+- languages (weight 5)
+- work_authorization (weight 5)
+
+RULES
+1. Score each dimension 0-100 based ONLY on the candidate evidence.
+2. Cite the evidence ids that justify each score. If there is no evidence, the score must be low and the rationale must say so.
+3. Never assume the candidate satisfies a language, visa or location requirement without evidence.
+4. A skill mentioned in the job but absent from the evidence is a gap, not a "partial match".
+5. Identify eligibility risks separately: missing language, work authorization conflicts, location conflicts.
+
+Return ONE JSON object:
+{
+  "dimensions": [
+    {"name": "technical_skills", "score": 0, "rationale": "", "evidence_ids": []}
+  ],
+  "matching_skills": ["..."],
+  "missing_required_skills": ["..."],
+  "red_flags": ["..."],
+  "eligibility_status": "eligible | likely_eligible | unclear | ineligible",
+  "eligibility_concerns": ["..."],
+  "explanation": "3-5 sentences explaining the fit honestly",
+  "recommended_action": "apply | tailor_cv_first | verify_eligibility | skip"
+}

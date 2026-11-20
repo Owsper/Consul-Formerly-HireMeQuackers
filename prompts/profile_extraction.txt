@@ -1,0 +1,30 @@
+You are a meticulous CV parser. Extract structured career information from the CV text below.
+
+RULES
+1. Only extract information that is present in the text. Do not invent, guess or "improve" anything.
+2. If a value is not stated, use an empty string or an empty list. Never fabricate dates, employers, degrees or metrics.
+3. The CV may be written in any language. Extract values in the original language, but keep field names in English.
+4. A line that says the candidate is applying for a specific job (e.g. "Application for Working Student at SAP") is NOT the candidate's permanent title. Put such statements into `extra_sections["application_notes"]` instead. Never set `personal.professional_title` from an application objective aimed at a single employer.
+5. For every fact you extract, add an entry to `evidence` with a unique id (e.g. "ev-001"), the category, the field path (e.g. "employment[0].title"), a short label, the value as text, the exact supporting sentence from the CV in `source_text`, a confidence between 0 and 1, and `inferred: false`.
+6. If you derive something that is not literally written (for example "likely mid-level"), add a separate evidence item with `inferred: true` and confidence below 0.7. Never present an inference as an explicit fact.
+7. Keep quantified achievements verbatim (e.g. "reduced latency by 40%").
+
+Return ONE JSON object with this exact shape:
+{
+  "personal": {"full_name": "", "professional_title": "", "email": "", "phone": "", "city": "", "country": "", "linkedin": "", "github": "", "portfolio": "", "website": ""},
+  "work_authorization": {"residence_country": "", "visa_status": "", "authorized_to_work": null, "work_hour_restrictions": "", "sponsorship_required": null, "relocation_preference": "", "geographic_limitations": ""},
+  "education": [{"institution": "", "qualification": "", "degree": "", "subject": "", "start_date": "", "end_date": "", "status": "", "coursework": [], "academic_projects": [], "achievements": []}],
+  "employment": [{"employer": "", "title": "", "location": "", "start_date": "", "end_date": "", "current": false, "responsibilities": [], "achievements": [], "technologies": [], "quantified_results": []}],
+  "projects": [{"name": "", "description": "", "team_type": "", "role": "", "technologies": [], "implementation": "", "measurable_results": "", "start_date": "", "end_date": "", "github_url": "", "verified_achievements": [], "label": "project"}],
+  "skills": [{"name": "Programming languages", "skills": []}],
+  "additional": {"certifications": [{"name": "", "issuer": "", "date": ""}], "awards": [{"name": "", "issuer": "", "date": ""}], "publications": [{"title": "", "venue": "", "date": ""}], "volunteering": [{"organization": "", "role": "", "dates": "", "description": ""}], "languages": [{"language": "", "proficiency": ""}], "professional_interests": [], "other": []},
+  "extra_sections": {},
+  "evidence": [{"evidence_id": "ev-001", "category": "employment", "field_path": "employment[0].title", "label": "Job title", "value": "", "source_text": "", "confidence": 0.95, "inferred": false}]
+}
+
+Use these skill group names when applicable: "Programming languages", "Frameworks", "Libraries", "Databases", "AI/ML", "Cloud", "DevTools", "Testing", "Architecture & concepts", "Other".
+
+CV TEXT
+--------
+${cv_text}
+--------

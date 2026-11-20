@@ -1,345 +1,521 @@
-"""Query planner — generates a prioritised family of search queries
-for the max-coverage discovery engine.
+"""Multilingual job search planning.
 
-Given a ``SearchConfig`` (and optionally a candidate profile) the
-planner returns a sorted :class:`QuerySpec` list.  Queries are
-grouped into *families*:
-
-* ``role``        — the user's own titles / keywords / CV target roles in any
-                  industry and country ("Nurse", "Marketing Assistant intern");
-                  local-language variants come from ``services.multilingual``
-* ``skill``       — skill × role / skill × position ("intern python")
-* ``location``    — location + remote / hybrid variants
-* ``ats``         — ATS/career-page search ("site:jobs.ashbyhq.com intern")
-* ``jobboard``    — site-specific major job-board search
-                  ("site:stepstone.de Werkstudent Python Berlin"); these
-                  get reserved slots so the query cap cannot crowd them out
-* (localized)    — role titles translated into every search language
-                  (``services.multilingual``); tagged ``meta["lang"]``
-* ``informal``    — community / forum wording ("we're hiring intern")
-* ``company``     — named-company career pages ("jobs at acme")
-* ``seniority``   — graduate / entry-level / working student variants
-* ``recent``      — "posted last week" family, for recency filters
-
-Each ``QuerySpec`` carries:
-
-* ``query_string``  — the literal phrase to pass to the provider
-* ``category``      — the family name above (``str``)
-* ``priority``      — 1-100;  higher = more likely to be relevant
-* ``max_pages``     — number of provider pages to follow for this query
-                    (default 2; can be stepped up for top-priority
-                    families when the user has set a generous budget)
-
-``plan_queries`` enforces ``max_queries`` and reports whether the
-plan was *truncated* (the caller can surface "hit the query cap" in
-the scan diagnostics UI).
+The LLM proposes a structured plan when available; a deterministic rule-based
+planner always exists as a fallback so the product remains usable offline.
+Plans are validated, deduplicated and capped before execution.
 """
+
 from __future__ import annotations
 
-import json
-import re
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
+from pathlib import Path
 
-@dataclass
-class QuerySpec:
-    """One concrete query to run through a search provider."""
+from pydantic import BaseModel, Field
 
-    query_string: str
-    category: str                      # role | skill | location | ats | informal | company | seniority | recent
-    priority: int = 50                 # 1-100
-    max_pages: int = 2
-    #: Human-readable reason this query is in the plan (shown in UI).
-    reason: str = ""
-    #: Related lookup fields (employer, skill, location) — used by
-    #: the search engine to attribute results to a family later.
-    meta: Dict[str, Any] = field(default_factory=dict)
+from core.exceptions import LLMUnavailableError
+from core.job_taxonomy import (
+    ANY_IT, CATEGORIES, GENERIC_IT_TITLES, all_category_titles, category_label,
+    detect_categories, get_category, guess_from_title, load_category_file,
+    specialisations_for, title_translations, titles_for,
+)
+from core.logging_config import get_logger
+from core.schemas import CandidateProfileData, PlannedQuery, SearchPlan, SearchPreferences
+from core.text import normalize_whitespace, slugify
+
+logger = get_logger("query_planner")
+
+MAX_QUERIES = 40
+
+# Optional deployment-level taxonomy extension (new industries/families).
+_TAXONOMY_FILE = Path(__file__).resolve().parents[1] / "config" / "job_categories.json"
+try:
+    load_category_file(_TAXONOMY_FILE)
+except Exception:  # a bad extension file must never stop search planning
+    pass
+
+COUNTRY_LANGUAGE = {
+    "germany": "de", "deutschland": "de", "austria": "de", "österreich": "de",
+    "switzerland": "de", "schweiz": "de",
+    "france": "fr", "belgium": "nl", "belgique": "fr",
+    "spain": "es", "españa": "es", "netherlands": "nl", "nederland": "nl",
+    "italy": "it", "italia": "it", "poland": "pl", "polska": "pl",
+    "portugal": "pt", "brazil": "pt", "united kingdom": "en", "uk": "en",
+    "ireland": "en", "united states": "en", "usa": "en", "canada": "en",
+    "australia": "en", "india": "en", "sweden": "en", "denmark": "en",
+    "norway": "en", "finland": "en", "czech republic": "en", "hungary": "en",
+}
+
+LANGUAGE_NAMES = {
+    "en": "English", "de": "German", "fr": "French", "es": "Spanish",
+    "nl": "Dutch", "it": "Italian", "pl": "Polish", "pt": "Portuguese",
+}
+
+# Local recruitment terminology (not literal translations).
+LOCAL_TERMS = {
+    "de": {"internship": "Praktikum", "working_student": "Werkstudent",
+           "entry": "Berufseinsteiger", "junior": "Junior", "suffix": " (m/w/d)"},
+    "fr": {"internship": "Stage", "working_student": "Alternance",
+           "entry": "Débutant", "junior": "junior", "suffix": " (H/F)"},
+    "es": {"internship": "Prácticas", "working_student": "Becario",
+           "entry": "Recién graduado", "junior": "junior", "suffix": ""},
+    "nl": {"internship": "Stage", "working_student": "Stagiair",
+           "entry": "Junior", "junior": "Junior", "suffix": ""},
+    "it": {"internship": "Tirocinio", "working_student": "Studente lavoratore",
+           "entry": "Neolaureato", "junior": "junior", "suffix": ""},
+    "pl": {"internship": "Praktyki", "working_student": "Student",
+           "entry": "Junior", "junior": "Junior", "suffix": ""},
+    "pt": {"internship": "Estágio", "working_student": "Estudante trabalhador",
+           "entry": "Júnior", "junior": "júnior", "suffix": ""},
+    "en": {"internship": "Internship", "working_student": "Working Student",
+           "entry": "Entry Level", "junior": "Junior", "suffix": ""},
+}
+
+ROLE_TRANSLATIONS = {
+    "software engineer": {
+        "de": "Softwareentwickler", "fr": "ingénieur logiciel", "es": "ingeniero de software",
+        "nl": "software engineer", "it": "ingegnere del software",
+        "pl": "inżynier oprogramowania", "pt": "engenheiro de software", "en": "Software Engineer",
+    },
+    "software developer": {
+        "de": "Softwareentwickler", "fr": "développeur logiciel", "es": "desarrollador de software",
+        "nl": "softwareontwikkelaar", "it": "sviluppatore software",
+        "pl": "programista", "pt": "desenvolvedor de software", "en": "Software Developer",
+    },
+    "python developer": {
+        "de": "Python-Entwickler", "fr": "développeur Python", "es": "desarrollador Python",
+        "nl": "Python developer", "it": "sviluppatore Python",
+        "pl": "programista Python", "pt": "desenvolvedor Python", "en": "Python Developer",
+    },
+    "backend developer": {
+        "de": "Backend-Entwickler", "fr": "développeur backend", "es": "desarrollador backend",
+        "nl": "backend developer", "it": "sviluppatore backend",
+        "pl": "programista backend", "pt": "desenvolvedor backend", "en": "Backend Developer",
+    },
+    "frontend developer": {
+        "de": "Frontend-Entwickler", "fr": "développeur frontend", "es": "desarrollador frontend",
+        "nl": "frontend developer", "it": "sviluppatore frontend",
+        "pl": "programista frontend", "pt": "desenvolvedor frontend", "en": "Frontend Developer",
+    },
+    "full stack developer": {
+        "de": "Full-Stack-Entwickler", "fr": "développeur full stack", "es": "desarrollador full stack",
+        "nl": "full stack developer", "it": "sviluppatore full stack",
+        "pl": "programista full stack", "pt": "desenvolvedor full stack", "en": "Full Stack Developer",
+    },
+    "data engineer": {
+        "de": "Data Engineer", "fr": "ingénieur données", "es": "ingeniero de datos",
+        "nl": "data engineer", "it": "data engineer", "pl": "inżynier danych",
+        "pt": "engenheiro de dados", "en": "Data Engineer",
+    },
+    "data analyst": {
+        "de": "Datenanalyst", "fr": "analyste données", "es": "analista de datos",
+        "nl": "data-analist", "it": "analista dati", "pl": "analityk danych",
+        "pt": "analista de dados", "en": "Data Analyst",
+    },
+    "machine learning engineer": {
+        "de": "Machine Learning Engineer", "fr": "ingénieur machine learning",
+        "es": "ingeniero de machine learning", "nl": "machine learning engineer",
+        "it": "machine learning engineer", "pl": "inżynier uczenia maszynowego",
+        "pt": "engenheiro de machine learning", "en": "Machine Learning Engineer",
+    },
+    "ai engineer": {
+        "de": "KI-Entwickler", "fr": "ingénieur IA", "es": "ingeniero de IA",
+        "nl": "AI engineer", "it": "ingegnere IA", "pl": "inżynier AI",
+        "pt": "engenheiro de IA", "en": "AI Engineer",
+    },
+    "devops engineer": {
+        "de": "DevOps Engineer", "fr": "ingénieur DevOps", "es": "ingeniero DevOps",
+        "nl": "DevOps engineer", "it": "DevOps engineer", "pl": "inżynier DevOps",
+        "pt": "engenheiro DevOps", "en": "DevOps Engineer",
+    },
+}
+
+ATS_SITES = ["boards.greenhouse.io", "jobs.lever.co", "jobs.ashbyhq.com",
+             "jobs.smartrecruiters.com", "apply.workable.com"]
 
 
-def _lower(s: str | None) -> str:
-    return (s or "").strip().lower()
+class SearchPlanResponse(BaseModel):
+    model_config = {"extra": "allow"}
+    candidate_summary: str = ""
+    role_families: list[str] = Field(default_factory=list)
+    english_titles: list[str] = Field(default_factory=list)
+    local_titles: dict[str, list[str]] = Field(default_factory=dict)
+    keywords: list[str] = Field(default_factory=list)
+    exclude_terms: list[str] = Field(default_factory=list)
+    queries: list[PlannedQuery] = Field(default_factory=list)
 
 
-def _dedupe(specs: List[QuerySpec]) -> List[QuerySpec]:
+def languages_for_countries(countries: list[str], explicit: list[str] | None = None) -> list[str]:
+    langs: list[str] = []
+    for name in explicit or []:
+        key = normalize_whitespace(name).lower()
+        for code, label in LANGUAGE_NAMES.items():
+            if key == code or key == label.lower():
+                langs.append(code)
+    for country in countries or []:
+        code = COUNTRY_LANGUAGE.get(normalize_whitespace(country).lower())
+        if code:
+            langs.append(code)
+    langs.append("en")
+    seen, ordered = set(), []
+    for code in langs:
+        if code not in seen:
+            seen.add(code)
+            ordered.append(code)
+    return ordered
+
+
+def _dedupe_queries(queries: list[PlannedQuery]) -> list[PlannedQuery]:
     seen: set[str] = set()
-    out: List[QuerySpec] = []
-    for spec in specs:
-        key = spec.query_string.lower()
+    result: list[PlannedQuery] = []
+    # Stable sort preserves planner order within each priority, so explicit
+    # custom titles stay ahead of generic category sweeps.
+    for query in sorted(queries, key=lambda q: q.priority):
+        text = normalize_whitespace(query.query)
+        if not text:
+            continue
+        key = text.lower()
         if key in seen:
             continue
         seen.add(key)
-        out.append(spec)
-    return out
+        query.query = text
+        query.priority = max(1, min(5, int(query.priority or 3)))
+        result.append(query)
+    return result[:MAX_QUERIES]
 
 
-#: EmploymentType value -> level word appended to role queries.
-_LEVEL_WORDS: Dict[str, str] = {
-    "internship": "intern",
-    "working_student": "working student",
-    "graduate": "graduate",
-    "part_time": "part time",
-}
-_LEVEL_RE = re.compile(
-    r"(?<!\w)(?:intern(?:ship)?|trainee|apprentice\w*|working student|werkstudent\w*|"
-    r"praktik\w*|graduate|entry[- ]level|junior|azubi|ausbildung|stage|stagiaire|"
-    r"part[- ]time)(?!\w)", re.I)
+def _selected_category(profile: CandidateProfileData, prefs: SearchPreferences) -> str | None:
+    """Resolve the category without restricting an explicit custom title."""
+    # An explicit title defines the discipline; it must never inherit an
+    # unrelated category from the candidate's existing skills.
+    for title in prefs.target_titles:
+        guessed = guess_from_title(title)
+        if guessed:
+            return guessed
+    if prefs.target_titles:
+        detected = detect_categories(
+            " ".join([prefs.specialisation, *prefs.target_titles]), [], limit=1)
+        if detected:
+            return detected[0]
+    if prefs.it_category and prefs.it_category != ANY_IT:
+        return prefs.it_category if get_category(prefs.it_category) else None
+    probe = " ".join([prefs.specialisation, profile.personal.professional_title])
+    detected = detect_categories(probe, profile.all_skills(), limit=1)
+    if detected:
+        return detected[0]
+    return guess_from_title(profile.personal.professional_title) or None
 
 
-def _has_level_word(title: str) -> bool:
-    """True when the title already names a level ("Marketing Intern",
-    "Werkstudent Vertrieb", "Graduate Nurse", "Entry-level ...")."""
-    return bool(_LEVEL_RE.search(title or ""))
+def _guess_role_family(profile: CandidateProfileData, prefs: SearchPreferences) -> list[str]:
+    """Build role families from profile choices first, taxonomy second.
 
-
-def _level_words(cfg) -> List[str]:
-    """Level words for the configured employment types, in config order.
-    Empty when the user searches regular (full-time / any) jobs."""
-    types = [getattr(e, "value", e) for e in (getattr(cfg, "employment_types", None) or [])]
-    if len(types) >= 6:  # "all types" — the user did not restrict the level
-        return []
-    out: List[str] = []
-    for t in types:
-        word = _LEVEL_WORDS.get(t)
-        if word and word not in out:
-            out.append(word)
-    return out
-
-
-def _roles(cfg, profile: Any | None) -> List[str]:
-    """Job titles to search for: the user's titles and keywords first,
-    then target roles stored with the CV.  Never a built-in default."""
-    raw: List[str] = [getattr(cfg, "primary_title", "") or ""]
-    raw += list(getattr(cfg, "title_synonyms", None) or [])
-    raw += list(getattr(cfg, "include_keywords", None) or [])
-    other = getattr(profile, "other_json", None) if profile is not None else None
-    if isinstance(other, str):
-        try:
-            other = json.loads(other)
-        except ValueError:
-            other = None
-    if isinstance(other, dict):
-        for key in ("target_roles", "job_titles"):
-            val = other.get(key)
-            raw += val if isinstance(val, list) else ([val] if isinstance(val, str) else [])
-    out: List[str] = []
-    for r in raw:
-        r = " ".join(str(r or "").split())
-        if r and _lower(r) not in {_lower(x) for x in out}:
-            out.append(r)
-    return out
-
-
-def plan_queries(
-    cfg: "SearchConfig",
-    *,
-    profile: Any | None = None,
-    max_queries: Optional[int] = None,
-    max_pages_per_query: int = 2,
-) -> list[QuerySpec]:
-    """Build the query family for a scan.
-
-    Parameters
-    ----------
-    cfg
-        User search config (from ``ui`` or API).
-    profile
-        Optional :class:`services.candidate_profile.CandidateProfile`.
-        When present the planner tries to pull in the user's
-        skills/industries if they aren't already in ``cfg``.
-    max_queries
-        Total queries to return (sorted by priority desc).  When
-        ``None``, falls back to ``cfg.max_queries_per_scan``.
-    max_pages_per_query
-        Number of provider pages to follow per query.  Ignored if
-        a caller passes ``QuerySpec.max_pages`` explicitly.
+    Explicit target titles always outrank category seeds, so a user who enters a
+    custom title is never forced into a predefined category. When no title is
+    supplied, the category (or the best-matching category for an "Any IT"
+    profile) supplies employer-realistic alternatives.
     """
-    from services.multilingual import localized_titles, query_language, search_languages
+    explicit = [normalize_whitespace(t) for t in prefs.target_titles if t]
+    alternatives = [normalize_whitespace(t) for t in prefs.alternative_titles if t]
+    category_key = _selected_category(profile, prefs)
+    candidates: list[str] = list(explicit)
 
-    specs: List[QuerySpec] = []
-    languages = search_languages(cfg)
+    if prefs.specialisation and category_key:
+        candidates += titles_for(category_key, prefs.specialisation, limit=3)
+    if category_key:
+        candidates += titles_for(category_key, limit=4)
 
-    # Industry-agnostic: every query is built from what the user asked for
-    # (titles / keywords / skills / companies) or from the CV — never from
-    # a built-in profession list.
-    roles = _roles(cfg, profile)
-    levels = _level_words(cfg)
-    level = levels[0] if levels else ""
-    entry_level = bool(levels)
-    skills: list[str] = list(cfg.required_skills or [])
-    for cs in (getattr(profile, "skills", None) or []):
-        if _lower(cs) not in {_lower(s) for s in skills}:
-            skills.append(cs)
-    # What to put in a query when the user gave no role at all
-    # ("any entry-level jobs in Berlin").
-    generic = [{"intern": "internship"}.get(lv, f"{lv} jobs") for lv in levels] or ["jobs"]
-    primary = roles[0] if roles else generic[0]
+    if not explicit:
+        if not category_key:
+            detected = detect_categories(
+                " ".join([prefs.specialisation, profile.personal.professional_title]),
+                profile.all_skills(), limit=2,
+            )
+            for key in detected:
+                candidates += titles_for(key, prefs.specialisation, limit=2)
+        if profile.personal.professional_title and category_key is None:
+            candidates.append(profile.personal.professional_title)
+        if not candidates and prefs.it_category == ANY_IT:
+            candidates += all_category_titles(limit_per_category=1, limit=4)
+        if not candidates:
+            candidates += GENERIC_IT_TITLES[:2]
 
-    def add(
-        query: str,
-        category: str,
-        priority: int,
-        reason: str = "",
-        max_pages: int = max_pages_per_query,
-        meta: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        q = " ".join((query or "").split())
-        if not q:
-            return
-        meta = dict(meta or {})
-        meta.setdefault("lang", query_language(q))
-        specs.append(QuerySpec(
-            query_string=q,
-            category=category,
-            priority=priority,
-            max_pages=max_pages,
-            reason=reason,
-            meta=meta,
-        ))
+    # If the user gave only a custom title, infer adjacent titles from that title.
+    if explicit and not category_key:
+        guessed = guess_from_title(explicit[0])
+        if guessed:
+            candidates += titles_for(guessed, limit=2)
 
-    def with_level(role: str, lv: str) -> str:
-        """'Nurse' + 'intern' -> 'Nurse intern'; no duplicate level word."""
-        if not lv or _has_level_word(role):
-            return role
-        return f"{role} {lv}"
+    candidates += alternatives
+    seen, families = set(), []
+    for candidate in candidates:
+        cleaned = normalize_whitespace(candidate)
+        if cleaned and cleaned.lower() not in seen:
+            seen.add(cleaned.lower())
+            families.append(cleaned)
+    return families[:6]
 
-    first_role = roles[0] if roles else ""
 
-    # ---------------------------------------------------------------- #
-    # Family 1: role titles (priority 95-85) — the user's own titles,
-    # with the requested level word ("intern", "working student", ...).
-    # ---------------------------------------------------------------- #
-    for i, role in enumerate(roles[:10]):
-        top = 95 if i == 0 else 90
-        add(role, "role", top, reason="requested title")
-        for j, lv in enumerate(levels[:2]):
-            add(with_level(role, lv), "role", top - 1 - j, reason=f"{role} ({lv})")
-    if not roles:
-        for i, g in enumerate(generic[:3]):
-            add(g, "role", 90 - i, reason="no title given — level only")
+def _english_titles(role_families: list[str], prefs: SearchPreferences) -> list[str]:
+    titles: list[str] = []
+    seniority = (prefs.seniority or "").lower()
+    early = seniority in {"internship", "working_student", "graduate", "junior", "entry"}
+    for role in role_families:
+        titles.append(role)
+        if early and not role.lower().startswith(("junior", "graduate", "working student", "intern")):
+            titles.append(f"Junior {role}")
+    titles += [t for t in prefs.alternative_titles if t]
+    employment = {e.lower() for e in prefs.employment_types}
+    if "working_student" in employment or seniority == "working_student":
+        for role in role_families[:2]:
+            titles.append(f"Working Student {role}")
+    if "internship" in employment or seniority == "internship":
+        for role in role_families[:2]:
+            titles.append(f"{role} Intern")
+            titles.append(f"Internship {role}")
+    if "graduate" in employment or seniority == "graduate":
+        for role in role_families[:2]:
+            titles.append(f"Graduate {role}")
+    seen, out = set(), []
+    for title in titles:
+        key = normalize_whitespace(title).lower()
+        if key not in seen:
+            seen.add(key)
+            out.append(normalize_whitespace(title))
+    return out[:12]
 
-    # ---------------------------------------------------------------- #
-    # Family 2: skill / qualification x level (priority 75-70)
-    # ---------------------------------------------------------------- #
-    for s in skills[:15]:
-        add(f"{s} {level}" if level else f"{s} jobs", "skill", 75, reason=f"skill {s}")
-        if first_role:
-            add(f"{first_role} {s}", "skill", 70, reason=f"{first_role} + skill {s}")
 
-    # ---------------------------------------------------------------- #
-    # Family 3: location + remote (priority 68-60)
-    # ---------------------------------------------------------------- #
-    for loc in cfg.locations[:6]:
-        add(f"{with_level(primary, level)} {loc}", "location", 65)
-        for role in roles[1:3]:
-            add(f"{role} {loc}", "location", 61)
-    if cfg.worldwide_remote or cfg.include_remote:
-        add(f"remote {with_level(primary, level)}", "location", 68, reason="remote")
-        add(f"remote {primary} worldwide", "location", 60)
-
-    # ---------------------------------------------------------------- #
-    # Family 4: ATS / career page (priority 55) — the same role on every
-    # ATS, so companies of every industry using these systems are found.
-    # ---------------------------------------------------------------- #
-    ats_roots: List[tuple[str, str]] = [
-        ("jobs.ashbyhq.com", "Ashby"),
-        ("jobs.lever.co", "Lever"),
-        ("boards.greenhouse.io", "Greenhouse"),
-        ("apply.workable.com", "Workable"),
-        ("bamboohr.com", "BambooHR"),
-    ]
-    for site, label in ats_roots:
-        add(f"site:{site} {with_level(primary, level)}", "ats", 55, reason=f"{label} ATS search")
-
-    # ---------------------------------------------------------------- #
-    # Family 4b: major job boards (priority 60-58) — publicly indexed
-    # listings only; boards with an official API (Arbeitnow) are
-    # covered by their adapter and skipped here.
-    # ---------------------------------------------------------------- #
-    from services.platforms import boards_for_scan
-
-    board_role = with_level(primary, level) if roles else primary
-    board_loc = cfg.locations[0] if cfg.locations else ""
-    for i, board in enumerate(boards_for_scan(cfg.locations)):
-        add(
-            f"site:{board.site} {board_role} {board_loc}",
-            "jobboard", 60 - min(i, 2),
-            reason=f"{board.label} indexed listings",
-            meta={"platform": board.label},
-        )
-
-    # ---------------------------------------------------------------- #
-    # Family 4c: localized role titles (priority 88-62) for every search
-    # language other than English — dictionary translations only, so an
-    # unknown title produces no query instead of a bad guess.
-    # ---------------------------------------------------------------- #
-    base_titles = [with_level(r, lv) for r in roles[:3] for lv in (levels[:2] or [""])]
-    base_titles = list(dict.fromkeys(base_titles or generic[:3]))
-    first_local = True
+def _local_titles(role_families: list[str], languages: list[str],
+                  prefs: SearchPreferences) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = {}
+    employment = {e.lower() for e in prefs.employment_types}
+    selected = prefs.it_category if prefs.it_category != ANY_IT else ""
     for lang in languages:
         if lang == "en":
             continue
-        for title in base_titles:
-            for i, local in enumerate(localized_titles(title, lang)):
-                add(local, "role", 88 - i, reason=f"{lang} title for {title!r}",
-                    meta={"lang": lang})
-                for loc in cfg.locations[:2]:
-                    add(f"{local} {loc}", "location", 63 - i,
-                        reason=f"{lang} title + location", meta={"lang": lang})
-                if first_local and i == 0:
-                    for site, label in ats_roots:
-                        add(f"site:{site} {local}", "ats", 55,
-                            reason=f"{label} ATS search ({lang})", meta={"lang": lang})
-        first_local = False
-
-    # ---------------------------------------------------------------- #
-    # Family 5: informal / community wording (priority 45)
-    # ---------------------------------------------------------------- #
-    for p in (f"hiring {primary}", f"we are hiring {primary}", f"looking for {primary}"):
-        add(p, "informal", 45)
-
-    # ---------------------------------------------------------------- #
-    # Family 6: company career pages (priority 55)
-    # ---------------------------------------------------------------- #
-    for company in (cfg.company_names or [])[:10]:
-        add(f"jobs at {company}", "company", 55, reason=company)
-        add(f"{company} {with_level(primary, level)}", "company", 55, reason=f"{company} job")
-
-    # ---------------------------------------------------------------- #
-    # Family 7: entry-level / graduate variants (priority 50) — only when
-    # the user searches at an entry level.
-    # ---------------------------------------------------------------- #
-    if entry_level:
-        add(f"graduate {first_role or 'jobs'}", "seniority", 50)
-        add(f"entry level {first_role or 'jobs'}", "seniority", 48)
-
-    # ---------------------------------------------------------------- #
-    # Family 8: recent (priority 30) — provider-dependent recency.
-    # ---------------------------------------------------------------- #
-    add(f"{with_level(primary, level)} posted last week", "recent", 30)
-
-    # ---------------------------------------------------------------- #
-    # Sort by priority desc; truncate to max_queries.
-    # ---------------------------------------------------------------- #
-    specs = _dedupe(specs)
-    # include_english=False: drop English-worded role/keyword queries once
-    # at least one other language is searched (site:/company queries stay).
-    if not getattr(cfg, "include_english", True) and any(x != "en" for x in languages):
-        neutral = {"ats", "jobboard", "company"}
-        specs = [s for s in specs
-                 if s.category in neutral or s.meta.get("lang") != "en"]
-    specs.sort(key=lambda s: (-s.priority, s.query_string.lower()))
-
-    if max_queries is None:
-        # Prefer the user's per-scan cap; fall back to a sensible default.
-        max_queries = getattr(cfg, "max_queries_per_scan", None) or 24
-    max_queries = max(1, int(max_queries))
-    if len(specs) > max_queries:
-        board_specs = [s for s in specs if s.category == "jobboard"]
-        quota = min(len(board_specs), max(1, max_queries // 3))
-        reserved = board_specs[:quota]
-        rest = [s for s in specs if s not in reserved][: max_queries - len(reserved)]
-        specs = sorted(rest + reserved, key=lambda s: (-s.priority, s.query_string.lower()))
-    return specs
+        terms = LOCAL_TERMS.get(lang, LOCAL_TERMS["en"])
+        titles: list[str] = []
+        for role in role_families:
+            translated = ROLE_TRANSLATIONS.get(role.lower(), {}).get(lang)
+            category_key = selected or guess_from_title(role)
+            if not translated:
+                translated = next(iter(title_translations(category_key, lang)), "")
+            translated = translated or role
+            titles.append(f"{translated}{terms['suffix']}")
+            if prefs.seniority in {"junior", "entry"} or "graduate" in employment:
+                titles.append(f"{terms['junior']} {translated}".strip())
+            if "working_student" in employment or prefs.seniority == "working_student":
+                titles.append(f"{terms['working_student']} {translated}")
+            if "internship" in employment or prefs.seniority == "internship":
+                titles.append(f"{terms['internship']} {translated}")
+            if "entry" in employment or "graduate" in employment or prefs.seniority == "graduate":
+                titles.append(f"{terms['entry']} {translated}")
+        seen, ordered = set(), []
+        for title in titles:
+            key = normalize_whitespace(title).lower()
+            if key and key not in seen:
+                seen.add(key)
+                ordered.append(normalize_whitespace(title))
+        result[lang] = ordered[:10]
+    return result
 
 
-__all__ = ["QuerySpec", "plan_queries"]
+def _locations(prefs: SearchPreferences) -> list[str]:
+    places = [normalize_whitespace(c) for c in (prefs.cities or []) if c]
+    if not places:
+        places = [normalize_whitespace(c) for c in (prefs.countries or []) if c]
+    if not places and prefs.work_modes and "remote" in [w.lower() for w in prefs.work_modes]:
+        places = ["Remote"]
+    return places[:4] or [""]
+
+
+def build_rule_based_plan(profile: CandidateProfileData, prefs: SearchPreferences,
+                          *, reason: str = "") -> SearchPlan:
+    """Deterministic plan used when the LLM is unavailable or fails."""
+    languages = languages_for_countries(prefs.countries, prefs.languages)
+    role_families = _guess_role_family(profile, prefs)
+    titles = _english_titles(role_families, prefs)
+    local = _local_titles(role_families, languages, prefs)
+    category_key = _selected_category(profile, prefs)
+    category = get_category(category_key)
+    requested = [*prefs.required_skills, *prefs.preferred_skills, *prefs.technologies]
+    keywords = list(dict.fromkeys(
+        normalize_whitespace(s) for s in [*requested, *profile.all_skills()] if normalize_whitespace(s)
+    ))
+    if not keywords and category:
+        keywords = list(category.core_skills)
+    keywords = keywords[:15]
+    locations = _locations(prefs)
+
+    # Seniority words are deliberately not excluded here: they are assessed by the
+    # scoring engine, and filtering them would hide roles the candidate may want.
+    exclude = ["10+ years", "Ausbildung", "Duales Studium", "Commission only"]
+    for company in prefs.exclude_companies:
+        if company:
+            exclude.append(company)
+
+    queries: list[PlannedQuery] = []
+    broad_any = prefs.it_category == ANY_IT and not prefs.target_titles
+
+    for title in titles[:(4 if broad_any else 6)]:
+        for location in locations:
+            suffix = f" {location}" if location else ""
+            queries.append(PlannedQuery(
+                query=f'"{title}"{suffix}', language="en", target="any",
+                priority=1 if title in prefs.target_titles else 2,
+                rationale=f'Broader market search for "{title}" roles.',
+            ))
+        for site in ATS_SITES[:(2 if broad_any else 4)]:
+            queries.append(PlannedQuery(
+                query=f'site:{site} "{title}"', language="en", target="search", priority=1,
+                rationale=f"Find official ATS postings for {title} on {site}.",
+            ))
+        queries.append(PlannedQuery(
+            query=f"{title} {' '.join(keywords[:3])}".strip(), language="en", target="ats",
+            priority=3, rationale="ATS keyword search across connected boards.",
+        ))
+        if keywords:
+            queries.append(PlannedQuery(
+                query=f'"{title}" "{keywords[0]}"', language="en", target="search", priority=2,
+                rationale=f"Skill-driven discovery for {title} using verified candidate skills.",
+            ))
+
+    if broad_any:
+        # Any IT means every registered discipline gets a query, not just the one
+        # detected from the candidate's current title.
+        for category in CATEGORIES.values():
+            if not category.titles:
+                continue
+            queries.append(PlannedQuery(
+                query=f'"{category.titles[0]}" {locations[0]}'.strip(), language="en",
+                target="search", priority=2,
+                rationale=f"Any-IT coverage for {category.label}.",
+            ))
+        queries.append(PlannedQuery(
+            query='"IT Specialist" OR "Technology Graduate"', language="en", target="search",
+            priority=4, rationale="Broad Any-IT sweep so no technology discipline is excluded.",
+        ))
+
+    for lang, lang_titles in local.items():
+        for title in lang_titles[:4]:
+            location = locations[0] if locations else ""
+            queries.append(PlannedQuery(
+                query=f'"{title}" {location}'.strip(), language=lang, target="any", priority=2,
+                rationale=f"Local {LANGUAGE_NAMES.get(lang, lang)} recruitment terminology.",
+            ))
+        if lang_titles:
+            queries.append(PlannedQuery(
+                query=f'{lang_titles[0]} Deutschland' if lang == "de" else f'{lang_titles[0]} {locations[0]}'.strip(),
+                language=lang, target="search", priority=3,
+                rationale="Local-language web discovery query.",
+            ))
+
+    summary = (
+        f"{profile.personal.full_name or 'Candidate'} — "
+        f"{profile.personal.professional_title or (role_families[0] if role_families else 'professional')}. "
+        f"Rule-based plan for {category_label(category_key) if category_key else category_label(ANY_IT)}"
+        f"{(' / ' + prefs.specialisation) if prefs.specialisation else ''}, targeting "
+        f"{len(role_families)} role families across {', '.join(prefs.countries) or 'remote'}."
+    )
+    plan = SearchPlan(
+        candidate_summary=summary,
+        it_category=category_key or prefs.it_category or ANY_IT,
+        specialisation=prefs.specialisation,
+        role_families=role_families,
+        english_titles=titles,
+        local_titles=local,
+        keywords=keywords,
+        exclude_terms=exclude,
+        queries=_dedupe_queries(queries),
+        generated_at=datetime.now(timezone.utc),
+        source="rule_based",
+        warnings=[reason] if reason else [],
+    )
+    logger.info("Rule-based search plan: %s queries, %s languages", len(plan.queries), len(local) + 1)
+    return plan
+
+
+def plan_search(profile: CandidateProfileData, prefs: SearchPreferences, llm=None) -> SearchPlan:
+    """Generate a validated search plan, degrading gracefully without an LLM."""
+    from services.llm_service import get_llm_service
+
+    service = llm or get_llm_service()
+    languages = languages_for_countries(prefs.countries, prefs.languages)
+    language_labels = [f"{code} ({LANGUAGE_NAMES[code]})" for code in languages]
+
+    if not service.available:
+        return build_rule_based_plan(
+            profile, prefs,
+            reason="No LLM configured — queries were generated with the built-in multilingual planner.",
+        )
+
+    category_key = _selected_category(profile, prefs)
+    category = get_category(category_key)
+    selected_title_hints = titles_for(category_key, prefs.specialisation, limit=10) if category else []
+    category_context = {
+        "category_key": category_key or ANY_IT,
+        "category_label": category_label(category_key),
+        "specialisation": prefs.specialisation,
+        "specialisations": specialisations_for(category_key),
+        "suggested_titles": selected_title_hints,
+        "explicit_target_titles": prefs.target_titles,
+        "must_respect_custom_titles": bool(prefs.target_titles),
+        "verified_candidate_skills": profile.all_skills(),
+        "requested_skills": [*prefs.required_skills, *prefs.preferred_skills,
+                             *prefs.technologies],
+    }
+    try:
+        response = service.prompt_json(
+            "search_planning",
+            SearchPlanResponse,
+            profile_json=profile.model_dump_json(indent=2),
+            preferences_json=prefs.model_dump_json(indent=2),
+            languages=", ".join(language_labels),
+            category_context=category_context,
+            taxonomy_categories=[
+                {"key": c.key, "label": c.label, "titles": list(c.titles[:6]),
+                 "specialisations": list(c.specialisations)}
+                for c in CATEGORIES.values()
+            ],
+        )
+    except LLMUnavailableError as exc:
+        return build_rule_based_plan(profile, prefs, reason=f"LLM unavailable: {exc}")
+    except Exception as exc:  # invalid output, quota, timeout
+        logger.warning("LLM search planning failed: %s", exc)
+        return build_rule_based_plan(profile, prefs, reason=f"AI planning failed ({exc}); used the rule-based planner.")
+
+    queries = _dedupe_queries(response.queries)
+    if not queries:
+        return build_rule_based_plan(profile, prefs, reason="AI returned no usable queries; fallback used.")
+    if not response.english_titles:
+        response.english_titles = _english_titles(
+            response.role_families or _guess_role_family(profile, prefs), prefs)
+    if prefs.target_titles:
+        # A custom title is a hard requirement, not a suggestion.
+        response.english_titles = list(dict.fromkeys(
+            [*prefs.target_titles, *response.english_titles]))[:15]
+
+    plan = SearchPlan(
+        candidate_summary=response.candidate_summary,
+        it_category=category_key or prefs.it_category or ANY_IT,
+        specialisation=prefs.specialisation,
+        role_families=response.role_families,
+        english_titles=response.english_titles,
+        local_titles=response.local_titles,
+        keywords=response.keywords,
+        exclude_terms=response.exclude_terms,
+        queries=queries,
+        generated_at=datetime.now(timezone.utc),
+        source="llm",
+    )
+    logger.info("AI search plan: %s queries across %s languages", len(queries), len(plan.local_titles) + 1)
+    return plan
+
+
+def plan_to_query_rows(plan: SearchPlan) -> list[dict]:
+    return [
+        {"query": q.query, "language": q.language, "target": q.target, "priority": q.priority}
+        for q in plan.queries
+    ]
+
+
+def plan_fingerprint(plan: SearchPlan) -> str:
+    return slugify("|".join(q.query for q in plan.queries))[:60]

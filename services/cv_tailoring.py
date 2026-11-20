@@ -1,217 +1,768 @@
-"""CV / LinkedIn tailoring suggestions.
+"""Evidence-grounded CV tailoring.
 
-If an AI provider is available, produce structured `suggestions`. If not, produce
-deterministic suggestions from overlap between `must_have_skills_missing` and
-profile content (skills, projects, experience text).
+Two generators share one output contract:
+
+* an LLM generator (recruiter-style rewriting, only permitted facts);
+* a deterministic generator used when the LLM is unavailable or its output
+  fails validation. It only selects, orders and lightly edits existing facts.
+
+Both are followed by a deterministic sanitiser and validator, so an unsupported
+bullet can never reach an exported document.
 """
+
 from __future__ import annotations
 
 import json
-import logging
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+import re
+from datetime import date, datetime, timezone
+from typing import Any
 
-from config.settings import get_config
-from database.models import CandidateProfile, GeneratedDocument, Job
-from services import llm
-from services.ai_client import ensure_clean_jd
-from services.usage_tracking import record_usage
+from pydantic import BaseModel, Field
+
+from core.logging_config import get_logger
+from core.schemas import (
+    CandidateProfileData, CVBullet, CVEntry, CVHeader, CVRow, CVSection, EvidenceItem,
+    JobRecord, MatchResult, TailoredCV, ValidationIssue, ValidationReport,
+)
+from core.text import (
+    canonical_skill, filename_stem, keyword_set, normalize_text, normalize_whitespace,
+    text_contains_skill,
+)
+
+logger = get_logger("cv")
+
+STANDARD_HEADINGS = {
+    "profile", "professional experience", "work experience", "experience", "project experience",
+    "academic projects", "projects", "education", "technical skills", "skills",
+    "languages", "certifications", "awards", "publications", "volunteering",
+    "additional information",
+}
+
+HEADING_TRANSLATIONS = {
+    "de": {
+        "Profile": "Profil",
+        "Professional Experience": "Berufserfahrung",
+        "Project Experience": "Projekterfahrung",
+        "Academic Projects": "Akademische Projekte",
+        "Education": "Ausbildung",
+        "Technical Skills": "Technische Kenntnisse",
+        "Languages": "Sprachen",
+        "Certifications": "Zertifikate",
+        "Awards": "Auszeichnungen",
+        "Publications": "Publikationen",
+        "Volunteering": "Ehrenamt",
+        "Additional Information": "Weitere Informationen",
+    },
+    "fr": {
+        "Professional Experience": "Expérience professionnelle",
+        "Project Experience": "Projets",
+        "Education": "Formation",
+        "Technical Skills": "Compétences techniques",
+        "Languages": "Langues",
+        "Certifications": "Certifications",
+    },
+    "es": {
+        "Professional Experience": "Experiencia profesional",
+        "Education": "Formación",
+        "Technical Skills": "Competencias técnicas",
+        "Languages": "Idiomas",
+    },
+    "nl": {
+        "Professional Experience": "Werkervaring",
+        "Education": "Opleiding",
+        "Technical Skills": "Technische vaardigheden",
+        "Languages": "Talen",
+    },
+}
+
+SUMMARY_TEMPLATES = {
+    "en": "{title} with {years}. Focused on {focus}. Applying for the {job_title} role at {company}.",
+    "de": "{title} mit {years}. Schwerpunkte: {focus}. Bewerbung auf die Position {job_title} bei {company}.",
+    "fr": "{title} avec {years}. Spécialisé en {focus}. Candidature au poste de {job_title} chez {company}.",
+    "es": "{title} con {years}. Especializado en {focus}. Candidatura al puesto de {job_title} en {company}.",
+    "nl": "{title} met {years}. Gericht op {focus}. Sollicitatie voor de functie {job_title} bij {company}.",
+}
 
 
-def build_cv_tailoring_suggestions(
-    profile: CandidateProfile, job: Job, match: Dict[str, Any]
-) -> List[Dict[str, str]]:
-    '''Return `list[{"field": str, "action": str, "reason": str}]`.
-
-    Fields to cover: summary, experience, skills, projects, certifications,
-    languages, achievements, linkedin_headline, linkedin_features.
-    Only contain "reason" based on what is ACTUALLY present in the profile
-    and job. Do not fabricate.
-
-    Optionally use the AI provider for cleaner wording; otherwise deterministic
-    fallthroughs.
-    '''
-    env = get_config()
-    if env.enable_ai_direction:
-        ai = llm.get()
-        if ai.available:
-            try:
-                sugg = _ai_direction(ai, profile, job, match)
-                if sugg:
-                    return sugg
-            except llm.LLMError as exc:
-                logging.getLogger(__name__).warning("CV advice fallback: %s", llm.failure_reason(exc))
-    return _deterministic(profile, job, match)
+class LLMCVResponse(BaseModel):
+    header: dict[str, Any] = Field(default_factory=dict)
+    summary: str = ""
+    sections: list[dict[str, Any]] = Field(default_factory=list)
+    notes: str = ""
 
 
-def _ai_direction(
-    ai: llm.LLM, profile: CandidateProfile, job: Job, match: Dict[str, Any]
-) -> List[Dict[str, str]]:
-    system_prompt = (
-        "You are a professional resume coach. Return ONLY JSON: an object "
-        '{"suggestions": [...]} whose items have exactly these keys: field, action, reason, source_quote. '
-        "Present 'field' from the enum: "
-        "summary, experience, skills, projects, certifications, languages, "
-        "achievements, linkedin_headline, linkedin_features. "
-        "Keep each 'reason' under 120 chars, grounded in the profile + JD, "
-        "and explicitly citing the concrete evidence (e.g. 'profile lists Kotlin in projects' "
-        "or 'JD requires SQL', etc.). Do NOT invent experience that is not in the "
-        "candidate profile."
-        " Include a source_quote field with an exact quote from the candidate profile supporting each suggestion."
-    )
-    candidate = {
-        "name": profile.name,
-        "skills": profile.skills,
-        "education": profile.education,
-        "experience": profile.experience,
-        "projects": profile.projects,
-        "certifications": profile.certifications,
-        "languages": profile.languages,
-        "achievements": profile.achievements,
-        "summary": profile.summary,
-    }
-    job_payload = {
-        "title": job.title,
-        "company": job.company,
-        "location": job.location,
-        "employment_type": job.employment_type,
-        "workplace_arrangement": job.workplace_arrangement,
-        "required_skills": job.required_skills,
-        "preferred_skills": job.preferred_skills,
-        "education_requirements": job.education_requirements,
-        "experience_requirements": job.experience_requirements,
-        "language_requirements": job.language_requirements,
-        "description": ensure_clean_jd(job.description or ""),
-    }
-    prompt = json.dumps(
-        {
-            "SCORE_MATCH": match,
-            "CANDIDATE_PROFILE": candidate,
-            "JOB": job_payload,
-            "INSTRUCTIONS": (
-                'Return {"suggestions": [...]} with 5-12 objects; each with '
-                "'field' in {summary, experience, skills, projects, certifications, "
-                "languages, achievements, linkedin_headline, linkedin_features}, "
-                "'action' (short imperative sentence), 'reason' (grounded). "
-                "Do not mention or invent skills that are absent from the candidate profile. "
-            ),
-        }
-    )
-    items = llm.json_list(ai.complete(system_prompt, prompt, json_mode=True), "suggestions")
-    out = []
-    allowed = {
-        "summary", "experience", "skills", "projects", "certifications",
-        "languages", "achievements", "linkedin_headline", "linkedin_features",
-    }
-    for item in items:
-        f = str(item.get("field") or "").lower().strip()
-        action = str(item.get("action") or "").strip()
-        reason = str(item.get("reason") or "").strip()
-        quote = item.get("source_quote")
-        from services.candidate_intelligence import evidence
-        grounded = isinstance(quote, str) and len(quote.strip()) >= 3 and any(quote.casefold() in e["quote"].casefold() for e in evidence(profile))
-        if f in allowed and action and reason and grounded:
-            out.append({"field": f, "action": action[:220], "reason": reason[:260]})
-        if len(out) >= 12:
-            break
+# ---------------------------------------------------------------------------
+# Evidence helpers
+# ---------------------------------------------------------------------------
+def _active_evidence(evidence: list[EvidenceItem]) -> list[EvidenceItem]:
+    return [e for e in evidence if e.status.value != "rejected"]
+
+
+def _evidence_corpus(evidence: list[EvidenceItem]) -> str:
+    return "\n".join(f"{e.label}: {e.value} {e.source_text}" for e in evidence)
+
+
+def _evidence_index(evidence: list[EvidenceItem]) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    for item in _active_evidence(evidence):
+        out.setdefault(item.field_path, []).append(item.evidence_id)
     return out
 
 
-def _deterministic(
-    profile: CandidateProfile, job: Job, match: Dict[str, Any]
-) -> List[Dict[str, str]]:
-    def find_evidence(field_blob: str) -> Optional[str]:
-        return field_blob or None
+def _ids_for_path(evidence: list[EvidenceItem], path: str,
+                  text: str = "") -> list[str]:
+    exact = [e.evidence_id for e in _active_evidence(evidence) if e.field_path == path]
+    if exact:
+        return exact
+    if text:
+        matches = [
+            e.evidence_id for e in _active_evidence(evidence)
+            if normalize_text(text) == normalize_text(e.value)
+            or (len(e.value) > 25 and normalize_text(e.value) in normalize_text(text))
+            or (len(text) > 25 and normalize_text(text) in normalize_text(e.value))
+        ]
+        if matches:
+            return matches[:3]
+    prefix = path.split("[")[0]
+    fallback = [e.evidence_id for e in _active_evidence(evidence)
+                if e.field_path.startswith(prefix)]
+    return fallback[:1]
 
-    exp_evidence = (match.get("must_have_skills_missing") or [])
-    expected_skills = list(job.required_skills or [])
-    pref_skills = list(job.preferred_skills or [])
-    matched = list(match.get("must_have_skills_matched") or [])
 
-    suggestions: List[Dict[str, str]] = []
+def _years_of_experience(profile: CandidateProfileData) -> int:
+    months = 0
+    for entry in profile.employment:
+        start = _ym(entry.start_date)
+        end = None if entry.current else _ym(entry.end_date)
+        if start and (end or entry.current):
+            end = end or date.today()
+            months += max(0, (end.year - start.year) * 12 + (end.month - start.month))
+    return round(months / 12)
 
-    # summary: lead with the strongest matched skills / experience
-    if matched:
-        top = matched[:3]
-        suggestions.append({
-            "field": "summary",
-            "action": f"Lead with {', '.join(top)} experience when it is relevant to the role",
-            "reason": f"Profile already lists {', '.join(top)}; JD title is: {job.title}",
-        })
-    else:
-        suggestions.append({
-            "field": "summary",
-            "action": "Rewrite summary to state your strongest, job-relevant skill that appears in both profile and JD",
-            "reason": f"Job requires {', '.join(expected_skills[:5])}; matched overlap is unclear",
-        })
 
-    # experience: highlight matching positions
-    if matched:
-        suggestions.append({
-            "field": "experience",
-            "action": "Emphasize bullets that evidence: " + ", ".join(matched[:4]),
-            "reason": "Profiles existing projects/experience that evidence these skills",
-        })
-    # skills: bump missing required skills if they appear in experience already
-    # (we don't fabricate; we only recommend that if a skill appears in exp text, 
-    #  add it to the skills section)
-    skill_blob = " ".join(profile.skills or []).lower()
-    exp_texts_blob = " ".join(
-        json.dumps(e.get("summary") or e.get("title") or "") for e in (profile.experience or [])
-    ).lower()
-    proj_blob = " ".join(
-        json.dumps(p.get("description") or p.get("name") or "") for p in (profile.projects or [])
-    ).lower()
-    tech_blob = skill_blob + " " + exp_texts_blob + " " + proj_blob
+def _ym(value: str | None) -> date | None:
+    if not value:
+        return None
+    text = str(value)
+    match = re.search(r"(19|20)\d{2}", text)
+    if not match:
+        return None
+    year = int(match.group(0))
+    month_match = re.search(r"(?:^|[-/.])(0?[1-9]|1[0-2])(?:$|[-/.])", text)
+    month = int(month_match.group(1)) if month_match else 1
+    try:
+        return date(year, month, 1)
+    except ValueError:
+        return date(year, 1, 1)
 
-    for s in exp_evidence[:3]:
-        ls = s.lower().strip()
-        if not ls:
+
+def _relevant_terms(job: JobRecord) -> set[str]:
+    return keyword_set(" ".join([job.title, job.description, *job.required_skills]))
+
+
+def _bullet_score(text: str, job: JobRecord, terms: set[str]) -> float:
+    blob = normalize_text(text)
+    score = 0.0
+    for skill in job.required_skills:
+        if text_contains_skill(text, skill):
+            score += 6
+    score += len(terms & keyword_set(blob)) * 1.5
+    if re.search(r"\d", text):
+        score += 0.5
+    return score
+
+
+def _pick_bullets(texts: list[str], ids: list[list[str]], job: JobRecord,
+                  terms: set[str], limit: int = 5) -> list[CVBullet]:
+    scored = []
+    for text, ev_ids in zip(texts, ids):
+        clean = normalize_whitespace(text).strip(" -•\t")
+        if not clean:
             continue
-        if ls in tech_blob:
-            suggestions.append({
-                "field": "skills",
-                "action": f"{s.capitalize()}: already evidenced in experience/projects — move it into the top Skills list",
-                "reason": f"JD mentions {s!r}; profile evidence appears in experience or projects text",
-            })
-    # languages
-    if job.language_requirements:
-        langs = {l.get("name", "") for l in (profile.languages or [])}
-        req = [r.lower().split(",")[0].strip() for r in (job.language_requirements.split(",") if "," in job.language_requirements else [job.language_requirements])]
-        for r in req:
-            if r and r not in {x.lower() for x in langs}:
-                suggestions.append({
-                    "field": "languages",
-                    "action": "Confirm your proficiency in " + r.capitalize() + "; include it only if you actually have it",
-                    "reason": f"JD requests language related to {r!r} that is not listed in the profile",
-                })
-    # certifications strong link
-    edefit = match.get("education_fit", "bad")
-    if edefit == "great":
-        suggestions.append({
-            "field": "certifications",
-            "action": "Keep certifications in the same order as the JD lists them",
-            "reason": "Education fit is strong; JD: " + (job.education_requirements or "n/a"),
-        })
-    # projects
-    if pref_skills:
-        suggestions.append({
-            "field": "projects",
-            "action": "Highlight projects that evidence the preferred skills: " + ", ".join(pref_skills[:3]),
-            "reason": f"Job mentions preferred skills {', '.join(pref_skills[:3])} in " + str(job.company or ""),
-        })
-    # linkedin_headline
-    if (job.employment_type or "").lower() == "internship" and not (profile.skills or []):
-        suggestions.append({
-            "field": "linkedin_headline",
-            "action": f"Headline: {job.title} | {', '.join(matched[:2] or ['student'])}",
-            "reason": "Interns should headline role + strongest skill(s)",
-        })
-    # linkedin_features
-    if "remote" in (job.workplace_arrangement or "").lower():
-        suggestions.append({
-            "field": "linkedin_features",
-            "action": "Set open-to-work: Remote roles, include titles from the target job",
-            "reason": "JD is remote",
-        })
-    return suggestions[:12]
+        scored.append((_bullet_score(clean, job, terms), clean, ev_ids))
+    scored.sort(key=lambda x: (-x[0], len(x[1])))
+    return [
+        CVBullet(text=_sentence(clean), evidence_ids=list(dict.fromkeys(ev_ids))[:4])
+        for _, clean, ev_ids in scored[:limit]
+    ]
+
+
+def _sentence(text: str) -> str:
+    text = normalize_whitespace(text)
+    if not text:
+        return ""
+    if text[-1] not in ".!?":
+        text += "."
+    return text[0].upper() + text[1:]
+
+
+def _dates(entry_start: str, entry_end: str, current: bool = False, language: str = "en") -> str:
+    if not entry_start and not entry_end and not current:
+        return ""
+    end = ("present" if language == "en" else "heute") if (current or not entry_end) else entry_end
+    return f"{entry_start} – {end}".strip(" –")
+
+
+def _visa_summary(profile: CandidateProfileData) -> str:
+    """Only state work-authorisation facts present in Ground Truth."""
+    auth = profile.work_authorization
+    parts: list[str] = []
+    if auth.visa_status:
+        parts.append(auth.visa_status)
+    if auth.authorized_to_work is True and auth.residence_country:
+        parts.append(f"Authorised to work in {auth.residence_country}")
+    if auth.sponsorship_required is False:
+        parts.append("No sponsorship required")
+    if auth.work_hour_restrictions:
+        parts.append(auth.work_hour_restrictions)
+    return " · ".join(dict.fromkeys(parts))
+
+
+def _applying_for(job: JobRecord) -> str:
+    parts = [job.title, job.company, job.location]
+    return "  |  ".join(p.strip() for p in parts if p and p.strip())
+
+
+# ---------------------------------------------------------------------------
+# Deterministic generator
+# ---------------------------------------------------------------------------
+def build_rule_based_cv(profile: CandidateProfileData, evidence: list[EvidenceItem],
+                        job: JobRecord, match: MatchResult | None = None,
+                        *, language: str = "en") -> TailoredCV:
+    language = (language or "en").lower()[:2]
+    terms = _relevant_terms(job)
+    header = CVHeader(
+        name=profile.personal.full_name,
+        title=profile.personal.professional_title or (profile.employment[0].title if profile.employment else ""),
+        contact_lines=profile.personal.contact_lines,
+        visa_status=_visa_summary(profile),
+        applying_for=_applying_for(job),
+    )
+
+    matched_skills = list(match.matching_skills) if match and match.matching_skills else [
+        s for s in profile.all_skills() if any(text_contains_skill(s, r) or text_contains_skill(r, s)
+                                              for r in job.required_skills)
+    ]
+    focus_terms = matched_skills[:5] or profile.all_skills()[:4]
+    focus = _join_list(focus_terms, language) or (
+        "software delivery" if language == "en" else "Softwareentwicklung"
+    )
+    years = _years_of_experience(profile)
+    years_text = (
+        f"{years}+ year{'s' if years != 1 else ''} of professional experience" if language == "en"
+        else f"{years}+ Jahre Berufserfahrung"
+    ) if years else ("hands-on project experience" if language == "en" else "praktische Projekterfahrung")
+    template = SUMMARY_TEMPLATES.get(language, SUMMARY_TEMPLATES["en"])
+    summary = template.format(
+        title=header.title or ("Professional" if language == "en" else "Fachkraft"),
+        years=years_text,
+        focus=focus,
+        job_title=job.title,
+        company=job.company or ("your team" if language == "en" else "Ihr Team"),
+    )
+
+    sections: list[CVSection] = []
+
+    if profile.employment:
+        entries: list[CVEntry] = []
+        for i, entry in enumerate(profile.employment):
+            texts = [*entry.responsibilities, *entry.achievements, *entry.quantified_results]
+            ids = [
+                _ids_for_path(evidence, f"employment[{i}].responsibilities[{j}]", t)
+                for j, t in enumerate(entry.responsibilities)
+            ] + [
+                _ids_for_path(evidence, f"employment[{i}].achievements[{j}]", t)
+                for j, t in enumerate(entry.achievements)
+            ] + [
+                _ids_for_path(evidence, f"employment[{i}].quantified_results[{j}]", t)
+                for j, t in enumerate(entry.quantified_results)
+            ]
+            bullets = _pick_bullets(texts, ids, job, terms, limit=5)
+            if not bullets:
+                continue
+            entries.append(CVEntry(
+                title=entry.title, organization=entry.employer, location=entry.location,
+                dates=_dates(entry.start_date, entry.end_date, entry.current, language),
+                technologies=list(entry.technologies),
+                bullets=bullets,
+            ))
+        if entries:
+            sections.append(CVSection(heading=_heading("Professional Experience", language),
+                                      kind="entries", entries=entries))
+
+    project_sections = _project_sections(profile, evidence, job, terms, language)
+    sections.extend(project_sections)
+
+    if profile.education:
+        entries = []
+        for i, edu in enumerate(profile.education):
+            headline = " ".join(x for x in (edu.qualification or edu.degree, edu.subject) if x)
+            focus = [item for item in edu.achievements
+                     if item.strip().lower().startswith(("focus:", "focus ", "schwerpunkt"))]
+            bullets: list[CVBullet] = []
+            remainder = [item for item in edu.achievements if item not in focus]
+            for j, item in enumerate([*remainder, *edu.academic_projects][:4]):
+                path = (f"education[{i}].achievements[{j}]" if j < len(remainder)
+                        else f"education[{i}].academic_projects[{j - len(remainder)}]")
+                bullets.append(CVBullet(text=_sentence(item),
+                                        evidence_ids=_ids_for_path(evidence, path, item)))
+            entries.append(CVEntry(
+                title=headline or edu.institution, organization=edu.institution if headline else "",
+                location="", dates=_dates(edu.start_date, edu.end_date, False, language),
+                technologies=focus,
+                bullets=bullets,
+            ))
+        sections.append(CVSection(heading=_heading("Education", language),
+                                  kind="entries", entries=entries))
+
+    skills = _skills_section(profile, job, language)
+    if skills:
+        sections.append(skills)
+
+    if profile.additional.languages:
+        sections.append(CVSection(
+            heading=_heading("Languages", language), kind="lines",
+            rows=[CVRow(label=l.language, text=l.proficiency or "")
+                  for l in profile.additional.languages if l.language],
+        ))
+    if profile.additional.certifications:
+        sections.append(CVSection(
+            heading=_heading("Certifications", language), kind="lines",
+            lines=[_join_nonempty([c.name, c.issuer, c.date], " — ")
+                   for c in profile.additional.certifications],
+        ))
+    if profile.additional.awards:
+        sections.append(CVSection(
+            heading=_heading("Awards", language), kind="lines",
+            lines=[_join_nonempty([a.name, a.issuer, a.date], " — ") for a in profile.additional.awards],
+        ))
+
+    return TailoredCV(
+        header=header, summary=summary, sections=sections, generator="rule_based",
+        target_job_title=job.title, target_company=job.company,
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+def _project_sections(profile: CandidateProfileData, evidence: list[EvidenceItem],
+                      job: JobRecord, terms: set[str], language: str) -> list[CVSection]:
+    professional: list[CVEntry] = []
+    academic: list[CVEntry] = []
+    for i, project in enumerate(profile.projects):
+        texts = [project.description, project.implementation, project.measurable_results,
+                 *project.verified_achievements]
+        ids = [
+            _ids_for_path(evidence, f"projects[{i}].description", project.description),
+            _ids_for_path(evidence, f"projects[{i}].implementation", project.implementation),
+            _ids_for_path(evidence, f"projects[{i}].results", project.measurable_results),
+        ] + [
+            _ids_for_path(evidence, f"projects[{i}].achievements[{j}]", a)
+            for j, a in enumerate(project.verified_achievements)
+        ]
+        relevance = _bullet_score(" ".join(texts), job, terms)
+        if relevance < 3 and len(profile.projects) > 2:
+            continue
+        bullets = _pick_bullets(texts, ids, job, terms, limit=4)
+        if not bullets:
+            continue
+        entry = CVEntry(
+            title=project.name or project.role, organization=project.role if project.name else "",
+            dates=_dates(project.start_date, project.end_date, False, language),
+            technologies=list(project.technologies),
+            bullets=bullets,
+        )
+        (academic if project.label == "academic_project" else professional).append(entry)
+
+    sections: list[CVSection] = []
+    if professional:
+        sections.append(CVSection(heading=_heading("Project Experience", language),
+                                  kind="entries", entries=professional))
+    if academic:
+        sections.append(CVSection(heading=_heading("Academic Projects", language),
+                                  kind="entries", entries=academic))
+    return sections
+
+
+def _skills_section(profile: CandidateProfileData, job: JobRecord, language: str) -> CVSection | None:
+    """Preserve the profile's skill categories as label/text rows."""
+    ranked: list[str] = []
+    seen: set[str] = set()
+
+    def add(skill: str) -> None:
+        key = canonical_skill(skill)
+        if key and key not in seen:
+            seen.add(key)
+            ranked.append(normalize_whitespace(skill))
+
+    required = {canonical_skill(s) for s in job.required_skills}
+
+    def is_required(skill: str) -> bool:
+        key = canonical_skill(skill)
+        return key in required or any(
+            text_contains_skill(skill, r) or text_contains_skill(r, skill)
+            for r in job.required_skills
+        )
+
+    rows: list[CVRow] = []
+    for group in profile.skills:
+        ordered = sorted(
+            [(index, normalize_whitespace(s)) for index, s in enumerate(group.skills)
+             if s.strip()],
+            key=lambda item: (0 if is_required(item[1]) else 1, item[0]),
+        )
+        ordered = [skill for _, skill in ordered]
+        values: list[str] = []
+        for skill in ordered:
+            add(skill)
+            if skill.lower() not in {v.lower() for v in values}:
+                values.append(skill)
+        if values:
+            rows.append(CVRow(label=group.name or "Technical", text=", ".join(values[:12])))
+
+    if not ranked:
+        return None
+    if not rows:
+        rows = [CVRow(label="Technical", text=", ".join(ranked[:24]))]
+    return CVSection(heading=_heading("Technical Skills", language), kind="skills",
+                     skills=ranked[:24], rows=rows)
+
+
+def _heading(text: str, language: str) -> str:
+    return HEADING_TRANSLATIONS.get(language, {}).get(text, text)
+
+
+def _join_list(items: list[str], language: str) -> str:
+    items = [i for i in items if i]
+    if not items:
+        return ""
+    if len(items) == 1:
+        return items[0]
+    conjunction = {"de": "und", "fr": "et", "es": "y", "nl": "en"}.get(language, "and")
+    return ", ".join(items[:-1]) + f" {conjunction} " + items[-1]
+
+
+def _join_nonempty(items: list[str], sep: str) -> str:
+    return sep.join(i for i in items if i)
+
+
+# ---------------------------------------------------------------------------
+# Sanitising and validation
+# ---------------------------------------------------------------------------
+def sanitize_cv(cv: TailoredCV, profile: CandidateProfileData,
+                evidence: list[EvidenceItem]) -> tuple[TailoredCV, list[str]]:
+    """Remove unsupported bullets and normalise contact details to Ground Truth."""
+    valid_ids = {e.evidence_id for e in _active_evidence(evidence)}
+    removed: list[str] = []
+    sections: list[CVSection] = []
+    for section in cv.sections:
+        heading = section.heading.strip()
+        if heading.lower() in {"references", "hobbies", "interests"}:
+            removed.append(f"Removed section '{heading}' (not requested by this job).")
+            continue
+        section.heading = _clean_text(heading) or section.heading
+        entries: list[CVEntry] = []
+        for entry in section.entries:
+            bullets: list[CVBullet] = []
+            seen: set[str] = set()
+            for bullet in entry.bullets:
+                text = _clean_text(bullet.text)
+                if not text:
+                    continue
+                ids = [i for i in bullet.evidence_ids if i in valid_ids]
+                if not ids:
+                    removed.append(text[:160])
+                    continue
+                key = normalize_text(text)
+                if key in seen:
+                    continue
+                seen.add(key)
+                bullets.append(CVBullet(text=text, evidence_ids=list(dict.fromkeys(ids))[:4]))
+            # Education and similar factual entries are valid without bullets.
+            if bullets or entry.title or entry.organization:
+                entry.bullets = bullets
+                entries.append(entry)
+        section.entries = entries
+        if section.kind == "entries" and not entries:
+            continue
+        sections.append(section)
+
+    header = CVHeader(
+        name=profile.personal.full_name or cv.header.name,
+        title=profile.personal.professional_title or cv.header.title,
+        contact_lines=profile.personal.contact_lines or cv.header.contact_lines,
+        visa_status=cv.header.visa_status or _visa_summary(profile),
+        applying_for=cv.header.applying_for,
+    )
+    cleaned = cv.model_copy(update={"sections": sections, "header": header,
+                                    "summary": _clean_text(cv.summary)})
+    return cleaned, removed
+
+
+def _clean_text(text: str) -> str:
+    if not text:
+        return ""
+    text = re.sub(r"[\U0001F300-\U0001FAFF\u2600-\u27BF]", "", text)
+    text = text.replace("\t", " ").replace("\u00a0", " ")
+    return normalize_whitespace(text)
+
+
+def validate_cv(cv: TailoredCV, profile: CandidateProfileData,
+                evidence: list[EvidenceItem], job: JobRecord,
+                *, removed_content: list[str] | None = None) -> ValidationReport:
+    issues: list[ValidationIssue] = []
+    active = _active_evidence(evidence)
+    valid_ids = {e.evidence_id for e in active}
+    corpus = _evidence_corpus(active)
+    corpus_norm = normalize_text(corpus)
+    numbers_in_corpus = set(re.findall(r"\d+(?:[.,]\d+)?%?", corpus.replace(",", ".")))
+
+    bullets = cv.all_bullets()
+    unsupported: list[str] = []
+    missing_citations = 0
+    for bullet in bullets:
+        if not bullet.evidence_ids:
+            missing_citations += 1
+            unsupported.append(bullet.text)
+            continue
+        bogus = [i for i in bullet.evidence_ids if i not in valid_ids]
+        if bogus:
+            missing_citations += 1
+            unsupported.append(bullet.text)
+            continue
+        # Numbers must exist in the evidence corpus (allows reordering, not invention).
+        for number in re.findall(r"\d+(?:[.,]\d+)?%?", bullet.text):
+            if number not in numbers_in_corpus and number.replace(".", ",") not in numbers_in_corpus:
+                unsupported.append(bullet.text)
+                break
+
+    coverage = (len(bullets) - missing_citations) / len(bullets) if bullets else 0.0
+
+    if unsupported:
+        issues.append(ValidationIssue(
+            severity="error", code="unsupported_claims",
+            message=f"{len(unsupported)} claim(s) could not be traced to the evidence ledger.",
+        ))
+    if not bullets and not any(s.entries or s.lines or s.skills or s.rows for s in cv.sections):
+        issues.append(ValidationIssue(severity="error", code="empty_cv",
+                                      message="The CV contains no evidence-backed content."))
+
+    # Contact details
+    if not profile.personal.email:
+        issues.append(ValidationIssue(severity="warning", code="missing_email",
+                                      message="No email address in the Ground Truth profile."))
+    if not profile.personal.phone:
+        issues.append(ValidationIssue(severity="warning", code="missing_phone",
+                                      message="No phone number in the Ground Truth profile."))
+
+    # Numbers that are section-level claims (e.g. "5 years") need a check too.
+    summary_numbers = set(re.findall(r"\d+", cv.summary))
+    suspicious_summary = [n for n in summary_numbers if n not in numbers_in_corpus
+                          and n not in {str(_years_of_experience(profile)), "1", "2"}]
+    if suspicious_summary:
+        issues.append(ValidationIssue(
+            severity="warning", code="summary_metric",
+            message=f"Summary contains numeric claims not in the ledger: {', '.join(suspicious_summary)}.",
+        ))
+
+    # Standard headings / ATS checks
+    headings = [s.heading for s in cv.sections]
+    ats_checks = {
+        "single_column": True,  # structurally guaranteed by the model and exporters
+        "standard_headings": all(h.lower() in STANDARD_HEADINGS or h.lower() in
+                                 {v.lower() for lang in HEADING_TRANSLATIONS.values()
+                                  for v in lang.values()} for h in headings),
+        "no_tables": True,
+        "no_images_or_icons": all(not re.search(r"[\U0001F300-\U0001FAFF\u2600-\u27BF]", b.text)
+                                  for b in bullets),
+        "no_skill_bars": True,
+        "contact_details": bool(profile.personal.email or profile.personal.phone),
+        "selectable_text": True,
+        "chronological_order": _chronological(cv),
+    }
+    if not ats_checks["standard_headings"]:
+        issues.append(ValidationIssue(
+            severity="warning", code="nonstandard_heading",
+            message=f"Non-standard section heading(s): {', '.join(headings)}.",
+        ))
+    if not ats_checks["contact_details"]:
+        issues.append(ValidationIssue(severity="warning", code="contact_details",
+                                      message="The header has no email or phone number; add one before sending."))
+
+    estimated_lines = 6 + sum(
+        3 + len(e.bullets) for s in cv.sections for e in s.entries
+    ) + sum(1 for s in cv.sections if s.kind == "skills" and (s.skills or s.rows)) * 3
+    if estimated_lines > 58:
+        issues.append(ValidationIssue(severity="warning", code="length",
+                                      message="The CV is likely longer than two pages; remove less relevant bullets."))
+
+    # Requirement coverage
+    cv_text = " ".join([cv.summary, *[b.text for b in bullets],
+                        *[sk for s in cv.sections for sk in s.skills],
+                        *[row.text for s in cv.sections for row in s.rows]])
+    matched = [r for r in job.required_skills if text_contains_skill(cv_text, r)]
+    unmet = [r for r in job.required_skills if r not in matched]
+    if unmet:
+        issues.append(ValidationIssue(
+            severity="warning", code="unmet_requirements",
+            message=f"Not evidenced in this CV: {', '.join(unmet[:8])}.",
+        ))
+
+    # Academic work mislabelled as employment
+    for section in cv.sections:
+        if section.heading.lower() in {"professional experience", "work experience", "berufserfahrung"}:
+            academic_names = {p.name for p in profile.projects if p.label == "academic_project"}
+            for entry in section.entries:
+                if entry.organization in academic_names or entry.title in academic_names:
+                    issues.append(ValidationIssue(
+                        severity="error", code="academic_as_employment",
+                        message="An academic project appears under Professional Experience.",
+                    ))
+
+    passed = not any(i.severity == "error" for i in issues)
+    return ValidationReport(
+        passed=passed, issues=issues, evidence_coverage=round(coverage, 3),
+        unsupported_claims=unsupported[:20], matched_requirements=matched,
+        unmet_requirements=unmet, removed_content=removed_content or [],
+        ats_checks=ats_checks, checked_at=datetime.now(timezone.utc),
+    )
+
+
+def _chronological(cv: TailoredCV) -> bool:
+    for section in cv.sections:
+        years: list[int] = []
+        for entry in section.entries:
+            match = re.search(r"(19|20)\d{2}", entry.dates or "")
+            if match:
+                years.append(int(match.group(0)))
+        if years and years != sorted(years, reverse=True):
+            return False
+    return True
+
+
+# ---------------------------------------------------------------------------
+# LLM generation
+# ---------------------------------------------------------------------------
+def _llm_generate(profile: CandidateProfileData, evidence: list[EvidenceItem],
+                  job: JobRecord, match: MatchResult | None, language: str) -> TailoredCV | None:
+    from services.llm_service import get_llm_service
+
+    service = get_llm_service()
+    if not service.available:
+        return None
+
+    evidence_lines = [
+        f"[{e.evidence_id}] ({e.category}) {e.label}: {e.value}" for e in _active_evidence(evidence)
+    ]
+    requirements = json.dumps({
+        "required_skills": job.required_skills,
+        "preferred_skills": job.preferred_skills,
+        "languages": job.languages,
+        "education": job.education_requirements,
+        "seniority": job.seniority,
+        "matching_skills": match.matching_skills if match else [],
+        "missing_skills": match.missing_required_skills if match else [],
+    }, ensure_ascii=False)
+    try:
+        response = service.prompt_json(
+            "cv_tailoring", LLMCVResponse,
+            job_json=job.model_dump_json(indent=2)[:16000],
+            profile_json=profile.model_dump_json(indent=2)[:24000],
+            evidence_list="\n".join(evidence_lines)[:24000],
+            requirements=requirements,
+            output_language=language,
+        )
+        cv = TailoredCV(
+            header=CVHeader.model_validate(response.header or {}),
+            summary=response.summary,
+            sections=[CVSection.model_validate(s) for s in response.sections if isinstance(s, dict)],
+            generator="llm", target_job_title=job.title, target_company=job.company,
+            generated_at=datetime.now(timezone.utc),
+        )
+        return cv if cv.sections else None
+    except Exception as exc:
+        logger.warning("LLM CV generation failed, using the deterministic generator: %s", exc)
+        return None
+
+
+async def audit_cv_with_llm(cv: TailoredCV, profile: CandidateProfileData,
+                            evidence: list[EvidenceItem], job: JobRecord) -> list[ValidationIssue]:
+    """Optional second-pass LLM audit (used by CV Studio after deterministic checks)."""
+    from services.llm_service import get_llm_service
+
+    service = get_llm_service()
+    if not service.available:
+        return []
+
+    class Audit(BaseModel):
+        passed: bool = True
+        unsupported_claims: list[str] = Field(default_factory=list)
+        issues: list[dict[str, Any]] = Field(default_factory=list)
+        suggested_removals: list[str] = Field(default_factory=list)
+
+    try:
+        audit = service.prompt_json(
+            "cv_validation", Audit,
+            cv_json=cv.model_dump_json(indent=2)[:24000],
+            profile_json=profile.model_dump_json(indent=2)[:24000],
+            evidence_list="\n".join(f"[{e.evidence_id}] {e.value}" for e in _active_evidence(evidence))[:24000],
+            job_json=job.model_dump_json(indent=2)[:12000],
+        )
+    except Exception as exc:
+        logger.info("LLM CV audit skipped: %s", exc)
+        return []
+    issues = []
+    for item in audit.issues[:10]:
+        try:
+            issues.append(ValidationIssue.model_validate(item))
+        except Exception:
+            continue
+    for claim in audit.unsupported_claims[:10]:
+        issues.append(ValidationIssue(severity="error", code="llm_unsupported_claim",
+                                      message=f"Auditor flagged: {claim[:240]}"))
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# Public entry point
+# ---------------------------------------------------------------------------
+def tailor_cv(profile: CandidateProfileData, evidence: list[EvidenceItem], job: JobRecord,
+              match: MatchResult | None = None, *, use_llm: bool = True,
+              language: str = "en") -> tuple[TailoredCV, ValidationReport]:
+    language = (language or job.language or "en").lower()[:2]
+    if language not in SUMMARY_TEMPLATES:
+        language = "en"
+
+    cv = None
+    if use_llm:
+        cv = _llm_generate(profile, evidence, job, match, language)
+    if cv is None:
+        cv = build_rule_based_cv(profile, evidence, job, match, language=language)
+
+    cv, removed = sanitize_cv(cv, profile, evidence)
+    cv.header.visa_status = cv.header.visa_status or _visa_summary(profile)
+    cv.header.applying_for = cv.header.applying_for or _applying_for(job)
+    report = validate_cv(cv, profile, evidence, job, removed_content=removed)
+
+    # If the LLM output had unsupported claims, fall back to the safe generator.
+    if cv.generator == "llm" and not report.passed:
+        fallback = build_rule_based_cv(profile, evidence, job, match, language=language)
+        fallback, removed_fallback = sanitize_cv(fallback, profile, evidence)
+        fallback_report = validate_cv(fallback, profile, evidence, job,
+                                      removed_content=removed + removed_fallback)
+        fallback_report.issues.append(ValidationIssue(
+            severity="warning", code="llm_fallback",
+            message="LLM draft failed validation; the deterministic evidence-only draft was used.",
+        ))
+        return fallback, fallback_report
+    return cv, report
+
+
+def evidence_map(cv: TailoredCV) -> dict[str, list[str]]:
+    return {bullet.text: bullet.evidence_ids for bullet in cv.all_bullets()}
+
+
+def filename_for(cv: TailoredCV, extension: str, version: int = 1) -> str:
+    stem = filename_stem("consul", "CV", cv.header.name or "Candidate",
+                         cv.target_company or "", cv.target_job_title or "",
+                         f"v{version}")
+    return f"{stem}.{extension.lstrip('.')}"

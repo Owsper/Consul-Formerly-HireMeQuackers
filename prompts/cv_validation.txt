@@ -1,0 +1,32 @@
+You are auditing a generated CV against the candidate's verified evidence before it is exported.
+
+GENERATED CV
+${cv_json}
+
+GROUND TRUTH PROFILE
+${profile_json}
+
+EVIDENCE LEDGER
+${evidence_list}
+
+TARGET JOB
+${job_json}
+
+CHECK
+1. Does every factual claim have support in the ledger? List unsupported claims precisely.
+2. Is any academic or personal project presented as professional employment?
+3. Are dates, employers, titles and qualifications consistent with the profile?
+4. Is any metric invented or altered?
+5. Is any language proficiency inflated?
+6. Are contact details present and complete?
+7. Is anything irrelevant to this job left in?
+8. Would an ATS parse this cleanly (standard headings, no tables, no images)?
+
+Return ONE JSON object:
+{
+  "passed": true,
+  "unsupported_claims": ["exact sentence", "..."],
+  "issues": [{"severity": "warning|error", "code": "short_code", "message": "..."}],
+  "suggested_removals": ["..."],
+  "notes": ""
+}

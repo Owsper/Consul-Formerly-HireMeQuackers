@@ -1,32 +1,18 @@
-# Core runtime
-pydantic>=2.0
-sqlalchemy>=2.0
-python-dotenv>=1.0
+streamlit>=1.40
+plotly>=5.22
+pydantic>=2.7
+SQLAlchemy>=2.0
 httpx>=0.27
 beautifulsoup4>=4.12
-lxml>=5.0
-feedparser>=6.0
-python-docx>=1.0
-reportlab>=4.0
-prompt_toolkit>=3.0
-
-# Optional - AI providers (only the one you use is needed)
-google-genai>=1.0
-openai>=3.0
-anthropic>=2.3
-
-# Optional - CV PDF extraction
+lxml>=5.2
+tenacity>=8.3
+python-docx>=1.1
 PyMuPDF>=1.24
+reportlab>=4.1
+google-genai>=1.0
+python-dotenv>=1.0
 
-# Optional (not installed by default) - OCR for scanned CV PDFs, runs locally.
-# Also needs the Tesseract program: https://github.com/UB-Mannheim/tesseract/wiki
-# pytesseract>=0.3
-# Optional (not installed by default) - better job-description language detection
-# langdetect>=1.0.9
-
-# Optional - browser automation (not installed by default)
-playwright>=1.40
-
-# Test / dev
+# Development / test
 pytest>=8.0
-pytest-mock>=3.0
+pytest-asyncio>=0.23
+respx>=0.21
