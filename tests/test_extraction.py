@@ -77,6 +77,17 @@ def test_structured_extraction_requires_an_llm():
         structured_extraction("   ", "ada.docx")
 
 
+def test_extra_sections_are_coerced_from_loose_model_output():
+    from core.schemas import CandidateProfileData
+
+    assert CandidateProfileData.model_validate(
+        {"extra_sections": "Applying for: Working Student"}
+    ).extra_sections == {"notes": ["Applying for: Working Student"]}
+    assert CandidateProfileData.model_validate(
+        {"extra_sections": {"a": "one", "b": None, "c": ["x"]}}
+    ).extra_sections == {"a": ["one"], "b": [], "c": ["x"]}
+
+
 def test_heuristic_hints_only_return_source_facts():
     hints = heuristic_hints(CV_TEXT)
     assert hints["email"] == "ada@example.com"
