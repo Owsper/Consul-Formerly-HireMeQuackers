@@ -104,8 +104,8 @@ def _profile_status() -> None:
                 '<div class="consul-side-profile">'
                 f'<div class="consul-avatar">{initials(name)}</div>'
                 f'<div><div class="consul-side-name">{safe_name}</div>'
-                f'<div class="consul-side-muted">Approved · v{profile.version} · '
-                f'{len(payload.evidence)} evidence</div></div></div>',
+                f'<div class="consul-side-muted">v{profile.version} · '
+                f'<span class="consul-stamp">{len(payload.evidence)} evidenced</span></div></div></div>',
                 unsafe_allow_html=True,
             )
     except Exception:
