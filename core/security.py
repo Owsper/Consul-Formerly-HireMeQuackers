@@ -29,6 +29,57 @@ def _is_private_ip(host: str) -> bool:
     )
 
 
+def _numeric_host_ip(host: str) -> ipaddress.IPv4Address | None:
+    """Decode the legacy IPv4 spellings clients still accept.
+
+    ``127.0.0.1``, ``127.1``, ``2130706433``, ``0x7f000001`` and ``0177.0.0.1``
+    all reach loopback in most HTTP stacks. ``ipaddress.ip_address`` only
+    understands the dotted-quad form, so those spellings used to pass the SSRF
+    check while the client resolved them internally.
+    """
+    candidate = host.strip("[]")
+    try:
+        if re.fullmatch(r"\d+", candidate):
+            return ipaddress.IPv4Address(int(candidate))
+        if re.fullmatch(r"0[xX][0-9a-fA-F]+", candidate):
+            return ipaddress.IPv4Address(int(candidate, 16))
+        if re.fullmatch(r"0[0-7]+", candidate) and len(candidate) > 1:
+            return ipaddress.IPv4Address(int(candidate, 8))
+    except ValueError:
+        return None
+    if not re.fullmatch(r"[0-9a-fA-FxX.]+", candidate) or "." not in candidate:
+        return None
+    parts = candidate.split(".")
+    if not 1 <= len(parts) <= 4:
+        return None
+    def _part_value(part: str) -> int:
+        if part.lower().startswith("0x"):
+            return int(part, 16)
+        if len(part) > 1 and part.startswith("0") and re.fullmatch(r"[0-7]+", part):
+            return int(part, 8)
+        return int(part)
+
+    try:
+        values = [_part_value(part) for part in parts if part != ""]
+    except ValueError:
+        return None
+    if len(values) != len(parts) or len(values) < 2:
+        return None
+    # inet_aton semantics: the final part fills the remaining bytes.
+    if any(value < 0 or value > 255 for value in values[:-1]):
+        return None
+    last_limit = 256 ** (5 - len(values)) - 1
+    if values[-1] < 0 or values[-1] > last_limit:
+        return None
+    number = sum(value * (256 ** (3 - index))
+                 for index, value in enumerate(values[:-1]))
+    number += values[-1]
+    try:
+        return ipaddress.IPv4Address(number)
+    except ValueError:
+        return None
+
+
 def validate_url(url: str, *, resolve_dns: bool = True, require_resolution: bool = True) -> str:
     """Validate an outbound URL and reject anything that could hit internal hosts.
 
@@ -47,6 +98,9 @@ def validate_url(url: str, *, resolve_dns: bool = True, require_resolution: bool
         raise UnsafeURLError("Refusing to access a local host")
     if _is_private_ip(host):
         raise UnsafeURLError("Refusing to access a private IP address")
+    numeric = _numeric_host_ip(host)
+    if numeric is not None and _is_private_ip(str(numeric)):
+        raise UnsafeURLError("Refusing to access a disguised private IP address")
     if resolve_dns:
         try:
             infos = socket.getaddrinfo(host, parsed.port or (443 if parsed.scheme == "https" else 80))
