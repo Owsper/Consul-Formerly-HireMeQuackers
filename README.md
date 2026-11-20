@@ -48,8 +48,11 @@ are never written to SQLite, logs or the UI.
 - `LLM_PROVIDER`, `LLM_API_KEY`, `LLM_MODEL`, `LLM_BASE_URL` — use any other
   OpenAI-compatible provider (`openai`, `groq`, `openrouter`, `deepseek`,
   `mistral`, `cerebras`, `zai`, `ollama`, or `custom` with your own base URL).
-- `LLM_TIMEOUT_SECONDS`, `LLM_MAX_OUTPUT_TOKENS`, `LLM_ENABLED` — request ceiling
-  and output cap; `LLM_ENABLED=0` runs fully offline.
+- `LLM_TIMEOUT_SECONDS`, `LLM_MAX_OUTPUT_TOKENS`, `LLM_REASONING_EFFORT`,
+  `LLM_ENABLED` — request ceiling, output cap and optional reasoning cap;
+  `LLM_ENABLED=0` runs fully offline. Groq's free tier counts `max_tokens`
+  against its 8,000 tokens/minute budget: use `LLM_MAX_OUTPUT_TOKENS=6000`
+  and `LLM_REASONING_EFFORT=low`.
 - `DATABASE_URL`, `DATA_DIR`, `MAX_UPLOAD_MB` — storage.
 - `CONSUL_SOFFICE` — optional path to a LibreOffice/soffice binary for DOCX→PDF.
 - `HTTP_TIMEOUT_SECONDS`, `MAX_CONCURRENCY`, `USER_AGENT` — scanning behaviour.
