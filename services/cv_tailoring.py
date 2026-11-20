@@ -208,19 +208,33 @@ def build_rule_based_cv(profile: CandidateProfileData, evidence: list[EvidenceIt
         applying_for=_applying_for(job),
     )
 
-    matched_skills = list(match.matching_skills) if match and match.matching_skills else [
-        s for s in profile.all_skills() if any(text_contains_skill(s, r) or text_contains_skill(r, s)
-                                              for r in job.required_skills)
-    ]
-    focus_terms = matched_skills[:5] or profile.all_skills()[:4]
+    demonstrated = profile.demonstrated_skills()
+    demonstrated_keys = {canonical_skill(s) for s in demonstrated}
+    # Only demonstrated skills may appear as a summary focus. A requirement
+    # matched from project prose (or marked as learning) is not a proficiency.
+    matched_skills = [s for s in (match.matching_skills if match else [])
+                      if canonical_skill(s) in demonstrated_keys]
+    if not matched_skills:
+        matched_skills = [s for s in demonstrated
+                          if any(text_contains_skill(s, r) or text_contains_skill(r, s)
+                                 for r in job.required_skills)]
+    focus_terms = matched_skills[:5] or demonstrated[:4]
     focus = _join_list(focus_terms, language) or (
         "software delivery" if language == "en" else "Softwareentwicklung"
     )
     years = _years_of_experience(profile)
-    years_text = (
-        f"{years}+ year{'s' if years != 1 else ''} of professional experience" if language == "en"
-        else f"{years}+ Jahre Berufserfahrung"
-    ) if years else ("hands-on project experience" if language == "en" else "praktische Projekterfahrung")
+    has_projects = bool(profile.projects or any(e.academic_projects for e in profile.education))
+    if years:
+        years_text = (f"{years}+ year{'s' if years != 1 else ''} of professional experience"
+                      if language == "en" else f"{years}+ Jahre Berufserfahrung")
+    elif has_projects:
+        years_text = ("hands-on project experience" if language == "en"
+                      else "praktische Projekterfahrung")
+    else:
+        # Never claim professional or project experience that is not recorded.
+        years_text = {"en": "an early-career background", "de": "einen Berufseinstieg",
+                      "fr": "un profil débutant", "es": "un perfil junior",
+                      "nl": "een startersprofiel"}.get(language, "an early-career background")
     template = SUMMARY_TEMPLATES.get(language, SUMMARY_TEMPLATES["en"])
     summary = template.format(
         title=header.title or ("Professional" if language == "en" else "Fachkraft"),
@@ -426,10 +440,34 @@ def _join_nonempty(items: list[str], sep: str) -> str:
 # ---------------------------------------------------------------------------
 # Sanitising and validation
 # ---------------------------------------------------------------------------
+def _allowed_skill_text(profile: CandidateProfileData,
+                        evidence: list[EvidenceItem]) -> tuple[str, set[str]]:
+    """Everything the ledger actually supports as a skill claim."""
+    parts: list[str] = list(profile.demonstrated_skills())
+    for entry in profile.employment:
+        parts.extend(entry.technologies)
+    for project in profile.projects:
+        parts.extend(project.technologies)
+    for item in _active_evidence(evidence):
+        if item.category in {"skill", "employment", "project"}:
+            parts.append(item.value)
+    learning = {canonical_skill(skill) for skill in
+                [*profile.learning_skills(), *profile.interest_skills()]}
+    return "\n".join(part for part in parts if part), learning
+
+
+def _skill_is_supported(skill: str, allowed_text: str, learning: set[str]) -> bool:
+    key = canonical_skill(skill)
+    if not key or key in learning:
+        return False
+    return text_contains_skill(allowed_text, skill)
+
+
 def sanitize_cv(cv: TailoredCV, profile: CandidateProfileData,
                 evidence: list[EvidenceItem]) -> tuple[TailoredCV, list[str]]:
-    """Remove unsupported bullets and normalise contact details to Ground Truth."""
+    """Remove unsupported bullets/skills and normalise contact details."""
     valid_ids = {e.evidence_id for e in _active_evidence(evidence)}
+    allowed_skill_text, learning_skills = _allowed_skill_text(profile, evidence)
     removed: list[str] = []
     sections: list[CVSection] = []
     for section in cv.sections:
@@ -462,6 +500,24 @@ def sanitize_cv(cv: TailoredCV, profile: CandidateProfileData,
         section.entries = entries
         if section.kind == "entries" and not entries:
             continue
+        if section.kind == "skills":
+            supported = [s for s in section.skills
+                         if _skill_is_supported(s, allowed_skill_text, learning_skills)]
+            for dropped in [s for s in section.skills if s not in supported]:
+                removed.append(f"Removed unsupported skill '{dropped}'.")
+            section.skills = supported
+            kept_rows: list[CVRow] = []
+            for row in section.rows:
+                values = [value.strip() for value in (row.text or "").split(",") if value.strip()]
+                kept = [value for value in values
+                        if _skill_is_supported(value, allowed_skill_text, learning_skills)]
+                for dropped in [value for value in values if value not in kept]:
+                    removed.append(f"Removed unsupported skill '{dropped}'.")
+                if kept:
+                    kept_rows.append(row.model_copy(update={"text": ", ".join(kept)}))
+            section.rows = kept_rows
+            if not section.skills and not section.rows:
+                continue
         sections.append(section)
 
     header = CVHeader(
@@ -495,6 +551,9 @@ def validate_cv(cv: TailoredCV, profile: CandidateProfileData,
     numbers_in_corpus = set(re.findall(r"\d+(?:[.,]\d+)?%?", corpus.replace(",", ".")))
 
     bullets = cv.all_bullets()
+    has_career_content = bool(profile.employment or profile.projects or any(
+        entry.academic_projects or entry.achievements for entry in profile.education
+    ))
     unsupported: list[str] = []
     missing_citations = 0
     for bullet in bullets:
@@ -515,6 +574,39 @@ def validate_cv(cv: TailoredCV, profile: CandidateProfileData,
 
     coverage = (len(bullets) - missing_citations) / len(bullets) if bullets else 0.0
 
+    # The summary is prose too. It must not claim experience, seniority or a
+    # learning skill that the Ground Truth does not support.
+    summary_text = normalize_text(cv.summary)
+    claimed_years = [int(value) for value in
+                     re.findall(r"(\d{1,2})\+?\s*(?:years?|jahre|ans|años|jaar)", summary_text)]
+    documented_years = _years_of_experience(profile)
+    if claimed_years and max(claimed_years) > documented_years + 1:
+        issues.append(ValidationIssue(
+            severity="error", code="unsupported_experience_claim",
+            message=(f"The summary claims {max(claimed_years)} years of experience, but the "
+                     f"profile documents {documented_years}."),
+        ))
+    if not profile.employment and re.search(
+            r"\b(experienced|extensive experience|proven track record|years of experience)\b",
+            summary_text):
+        issues.append(ValidationIssue(
+            severity="error", code="unsupported_experience_claim",
+            message="The summary describes professional experience, but no employment is recorded.",
+        ))
+    for skill in profile.learning_skills():
+        if text_contains_skill(cv.summary, skill):
+            issues.append(ValidationIssue(
+                severity="error", code="unsupported_skill_claim",
+                message=(f"The summary presents '{skill}' as a skill even though it is "
+                         "recorded as currently learning."),
+            ))
+    if not bullets and not has_career_content:
+        issues.append(ValidationIssue(
+            severity="warning", code="no_experience_evidence",
+            message="No employment, project or academic evidence exists yet; the CV has no "
+                    "experience bullets. Add Ground Truth evidence before applying.",
+        ))
+
     if unsupported:
         issues.append(ValidationIssue(
             severity="error", code="unsupported_claims",
@@ -523,6 +615,14 @@ def validate_cv(cv: TailoredCV, profile: CandidateProfileData,
     if not bullets and not any(s.entries or s.lines or s.skills or s.rows for s in cv.sections):
         issues.append(ValidationIssue(severity="error", code="empty_cv",
                                       message="The CV contains no evidence-backed content."))
+    # A professional CV must actually cite the evidence ledger. A summary plus
+    # an uncited skill list is not a tailored CV and must not pass validation.
+    if not bullets and has_career_content:
+        issues.append(ValidationIssue(
+            severity="error", code="no_evidence_bullets",
+            message=("The draft contains no evidence-cited experience or project bullets. "
+                     "Regenerate with the deterministic builder and review the result."),
+        ))
 
     # Contact details
     if not profile.personal.email:
@@ -643,9 +743,17 @@ def _llm_generate(profile: CandidateProfileData, evidence: list[EvidenceItem],
     if not service.available:
         return None
 
-    evidence_lines = [
-        f"[{e.evidence_id}] ({e.category}) {e.label}: {e.value}" for e in _active_evidence(evidence)
-    ]
+    def _evidence_line(item: EvidenceItem) -> str:
+        from core.text import skill_group_status
+
+        marker = ""
+        if item.category == "skill" and skill_group_status(item.label) != "demonstrated":
+            marker = " [NOT DEMONSTRATED — do not present as a skill or proficiency]"
+        elif item.category == "interest":
+            marker = " [CAREER INTEREST — not a qualification]"
+        return f"[{item.evidence_id}] ({item.category}) {item.label}: {item.value}{marker}"
+
+    evidence_lines = [_evidence_line(item) for item in _active_evidence(evidence)]
     extracted = job_terms(job)
     requirements = json.dumps({
         "required_skills": job.required_skills,
