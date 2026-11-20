@@ -14,6 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from config import get_settings
+from core.ats_rules import apply_layout_signals
 from core.exceptions import JobNotFoundError, ProfileNotFoundError
 from core.logging_config import get_logger
 from core.models import Job, TailoredCVRow
@@ -140,6 +141,7 @@ def _attach_layout_report(report: ValidationReport, files: dict[str, str]) -> No
         report.layout = compare_layout(
             pdf_path, source=pdf_render_source(pdf_path),
         )
+        report.ats_report = apply_layout_signals(report.ats_report, report.layout)
     except Exception as exc:  # layout verification must never block an export
         logger.warning("Layout verification failed: %s", exc)
         report.layout = {"passed": False, "checks": [], "error": type(exc).__name__}
