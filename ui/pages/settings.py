@@ -17,8 +17,14 @@ from ui import components as c
 from ui.nav import go
 
 ENV_REFERENCE = [
-    ("GEMINI_API_KEY", "Gemini API key for extraction, planning and CV drafting"),
-    ("GEMINI_MODEL", "Model name, default gemini-2.5-flash"),
+    ("GEMINI_API_KEY", "Gemini API key (used when LLM_PROVIDER=gemini)"),
+    ("GEMINI_MODEL", "Gemini model name, default gemini-2.5-flash"),
+    ("LLM_PROVIDER", "gemini (default), openai, groq, openrouter, deepseek, mistral, "
+                      "cerebras, zai, ollama or custom"),
+    ("LLM_API_KEY", "API key for any non-Gemini provider"),
+    ("LLM_MODEL", "Model name; defaults to the provider preset"),
+    ("LLM_BASE_URL", "Override the provider's base URL (required for custom)"),
+    ("LLM_TIMEOUT_SECONDS / LLM_MAX_OUTPUT_TOKENS", "Request timeout and output cap"),
     ("LLM_ENABLED", "Set 0 for a fully offline run"),
     ("DATABASE_URL", "SQLAlchemy URL; defaults to the SQLite file in data/"),
     ("ADZUNA_APP_ID / ADZUNA_APP_KEY", "Adzuna aggregator credentials"),
@@ -51,8 +57,10 @@ def render() -> None:
     st.markdown('<div class="consul-divider"></div>', unsafe_allow_html=True)
     st.subheader("Runtime configuration")
     col1, col2, col3 = st.columns(3)
-    col1.markdown(c.kv("Gemini", "Configured" if settings.llm_available else "Not configured")
-                  + c.kv("Model", settings.gemini_model), unsafe_allow_html=True)
+    col1.markdown(c.kv("LLM provider", settings.llm_provider)
+                  + c.kv("Model", settings.active_model or "—")
+                  + c.kv("Status", "Configured" if settings.llm_available else "Not configured"),
+                  unsafe_allow_html=True)
     col2.markdown(c.kv("Database", Path(settings.database_url.split("sqlite:///")[-1]).name)
                   + c.kv("Data directory", str(settings.data_dir)), unsafe_allow_html=True)
     col3.markdown(c.kv("HTTP timeout", f"{settings.http_timeout_seconds}s")
