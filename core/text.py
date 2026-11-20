@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import ast
+import json
 import re
 import unicodedata
 from difflib import SequenceMatcher
+from typing import Any
 
 _WS_RE = re.compile(r"\s+")
 _NON_WORD_RE = re.compile(r"[^a-z0-9+#. ]+")
@@ -44,6 +47,88 @@ SKILL_ALIASES = {
 
 def normalize_whitespace(text: str) -> str:
     return _WS_RE.sub(" ", text or "").strip()
+
+
+def _decode_sequence(text: str) -> list[Any] | None:
+    """Return a list embedded in a JSON/Python-notation string, if any."""
+    if len(text) < 2 or text[0] not in "[(" or text[-1] not in ")]":
+        return None
+    for loader in (ast.literal_eval, json.loads):
+        try:
+            parsed = loader(text)
+        except (ValueError, SyntaxError, TypeError, json.JSONDecodeError):
+            continue
+        if isinstance(parsed, (list, tuple)):
+            return list(parsed)
+    return None
+
+
+def _strip_serialization_wrappers(text: str) -> str:
+    """Remove brackets and quotes left behind by a previous CSV round-trip."""
+    text = text.strip()
+    for _ in range(10):
+        before = text
+        # Escaped quotes from repeated repr/JSON round-trips serve no purpose
+        # inside a skill name; normal punctuation such as C# and CI/CD stays.
+        text = text.replace("\\", "").strip()
+        # Only unwrap brackets that look like a serialized container, so real
+        # values such as "React (hooks)" and "(ISC)²" keep their brackets.
+        if len(text) >= 3 and text[0] == "[" and text[-1] == "]" and text[1] in "\"'[":
+            text = text[1:-1].strip()
+        elif len(text) >= 3 and text[0] == "(" and text[-1] == ")" and text[1] in "\"'(":
+            text = text[1:-1].strip()
+        if len(text) >= 2 and text[0] in "[(" and text[1] in "\"'":
+            text = text[1:].strip()
+        if len(text) >= 2 and text[-1] in "])" and text[-2] in "\"'":
+            text = text[:-1].strip()
+        if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
+            text = text[1:-1].strip()
+        if text == before:
+            break
+    return text.strip()
+
+
+def normalize_string_list(value: Any) -> list[str]:
+    """Turn a list field into clean strings, healing legacy serialized values.
+
+    Older profile data can contain values such as ``"['Python', 'SQL']"`` or
+    nested variants after a list was rendered into a comma-separated editor and
+    read back. Real skill punctuation such as ``C#``, ``C++``, ``.NET`` and
+    ``CI/CD`` is preserved.
+    """
+    result: list[str] = []
+
+    def visit(item: Any, depth: int = 0) -> None:
+        if item is None or depth > 12:
+            return
+        if isinstance(item, str):
+            text = item.strip()
+            if not text:
+                return
+            decoded = _decode_sequence(text)
+            if decoded is not None:
+                for nested in decoded:
+                    visit(nested, depth + 1)
+                return
+            for part in re.split(r"[,;\n]", text):
+                cleaned = _strip_serialization_wrappers(part)
+                if not cleaned:
+                    continue
+                nested = _decode_sequence(cleaned)
+                if nested is not None:
+                    for value in nested:
+                        visit(value, depth + 1)
+                else:
+                    result.append(normalize_whitespace(cleaned))
+            return
+        if isinstance(item, (list, tuple, set)):
+            for nested in item:
+                visit(nested, depth + 1)
+            return
+        result.append(normalize_whitespace(str(item)))
+
+    visit(value)
+    return [item for item in result if item]
 
 
 def strip_accents(text: str) -> str:
