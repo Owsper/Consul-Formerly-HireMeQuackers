@@ -44,6 +44,9 @@ def esc(text: object) -> str:
 
 def page_header(title: str, subtitle: str = "", *, kicker: str | None = None) -> None:
     eyebrow = kicker or PAGE_KICKERS.get(title, "consul workspace")
+    # A one-sentence subhead reads as a label, so it drops the trailing period.
+    if subtitle.endswith(".") and ". " not in subtitle:
+        subtitle = subtitle[:-1]
     st.markdown(
         '<div class="consul-page-head">'
         f'<div class="consul-eyebrow">consul / {esc(eyebrow)}</div>'
@@ -219,7 +222,8 @@ def score_breakdown(match: MatchResult) -> None:
                      "Weight": st.column_config.TextColumn("Weight", width="small"),
                  })
     if match.matching_skills:
-        st.markdown("**Evidenced requirements** · " + ", ".join(esc(s) for s in match.matching_skills),
+        st.markdown('<span class="consul-stamp">evidenced</span> '
+                    + ", ".join(esc(s) for s in match.matching_skills),
                     unsafe_allow_html=True)
     if match.missing_required_skills:
         st.markdown("**Not evidenced** · " + ", ".join(esc(s) for s in match.missing_required_skills),

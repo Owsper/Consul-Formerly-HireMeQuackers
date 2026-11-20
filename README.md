@@ -85,11 +85,13 @@ data/                         # SQLite DB, uploads, exports, backups (gitignored
 
 ## Interface
 
-The workspace uses one design system (`ui/theme.py`) borrowed from our TerraTrace
-mission console: warm near-black panels, a single signal-orange accent, Dela
-Gothic One headlines, Archivo body text and Geist Mono for labels and numbers,
-hairline borders and 4px corners. The dashboard opens on a colour-block hero.
-Dark is the default; the toggle switches to a warm-paper daylight variant.
+The workspace uses one design system (`ui/theme.py`), cleaned up with the
+[unslop](https://github.com/heydamir/unslop) skill by Damir Sokolovsky: quiet
+graphite surfaces and hairlines, three text roles and one ember accent kept for
+the primary action, focus and the key funnel step. Archivo for the interface,
+Geist Mono for figures and meta, a 4px spacing grid, one short entrance and no
+looping motion. Facts backed by your CV carry a small "evidenced" stamp. Dark is
+the default; the toggle switches to a light graphite variant.
 Navigation is grouped by Workspace, Find work, Apply and Operations. Cards,
 badges, metrics, forms, tables, empty states and the CV preview share one
 spacing and colour scale. Fonts are bundled in `ui/assets/fonts` (SIL OFL) and

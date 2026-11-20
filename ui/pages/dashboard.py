@@ -35,16 +35,13 @@ def render() -> None:
         follow_ups = [(a, to_record(a)) for a in upcoming_items["follow_ups"]]
         interviews = [(a, to_record(a)) for a in upcoming_items["interviews"]]
 
-    name = profile_payload.data.personal.full_name.split(" ")[0] if profile_payload and profile_payload.data.personal.full_name else ""
     st.markdown(
         f"""
         <div class="consul-hero">
-            <div class="consul-eyebrow">Career desk / workspace</div>
-            <h1 style="margin:.3rem 0 .45rem 0; font-size:clamp(1.8rem,3vw,2.5rem);">
-                {"Welcome back" + (", " + c.esc(name) if name else "") + "." if profile_payload else "A job search you can audit."}
-            </h1>
-            <p style="margin:0; max-width:660px; opacity:.9; font-size:.98rem; line-height:1.55;">
-                Evidence-backed matching, multilingual discovery and CVs that only claim what you can prove.
+            <div class="consul-eyebrow">Dashboard</div>
+            <h1 style="margin:0 0 12px 0;">Roles scored against what your CV can prove</h1>
+            <p style="margin:0; font-size:17px; line-height:1.55;">
+                Evidence-backed matching, multilingual discovery and CVs that only claim what you can prove
             </p>
             <div class="consul-hero-note">
                 {stats["total_jobs"]} roles discovered · {stats["strong"] + stats["excellent"]} strong matches · {stats["saved"]} shortlisted
@@ -55,11 +52,10 @@ def render() -> None:
     )
     st.write("")
 
-    cols = st.columns(5)
+    # Three headline figures; the full funnel lives in the pipeline below.
+    cols = st.columns(3)
     metrics = [
-        ("Jobs discovered", stats["total_jobs"]),
         ("Strong matches", stats["strong"] + stats["excellent"]),
-        ("Saved", stats["saved"]),
         ("Applications", stats["applications"]),
         ("Interviews", stats["interviews"]),
     ]

@@ -1,11 +1,18 @@
 """Visual design system for the consul Streamlit workspace.
 
-The direction follows the TerraTrace mission console: warm near-black panels,
-one signal-orange accent, a heavy display face (Dela Gothic One) for headlines,
-Archivo for body copy and Geist Mono for labels and numbers. Hairline borders
-and 4px corners instead of shadows. Fonts are bundled in ``ui/assets/fonts`` and
-inlined as data URIs, so the app stays fully offline. Tokens are centralised
-here so every page shares one scale for colour, type, spacing and state.
+Direction (unslop pass, after Damir Sokolovsky's unslop skill, CC BY 4.0):
+
+- Product: a local job-search desk that finds roles, scores them against the
+  evidence in your own CV, tailors CVs and tracks applications.
+- Character: exact, checkable, a little warm.
+- World: a case file, documents, stamps and a ledger of evidence.
+- Moments: the match score with its reasons, and the CV preview as paper.
+- Signature: the small "evidenced" stamp wherever a fact has a source.
+
+Chrome stays quiet: graphite surfaces, hairlines, three text roles and one
+ember accent used for the primary action, focus and progress only. Archivo for
+the interface, Geist Mono for figures and meta, both bundled in
+``ui/assets/fonts`` and inlined so nothing loads from the network.
 """
 
 from __future__ import annotations
@@ -20,69 +27,59 @@ import streamlit as st
 FONTS_DIR = Path(__file__).parent / "assets" / "fonts"
 
 DARK = {
-    "bg": "#0F0806",
-    "surface": "#170D0A",
-    "surface_alt": "#1E120D",
-    "text": "#F7EDE6",
-    "muted": "#A38B81",
-    "border": "#2E1C16",
-    "brand": "#FF5A1F",
-    "brand_soft": "#2A140C",
-    "on_brand": "#1A0700",
-    "accent": "#FF5A1F",
-    "accent_soft": "rgba(255,90,31,0.10)",
-    "success": "#5DBF7E",
-    "success_soft": "#132219",
-    "warn": "#E2B54A",
-    "warn_soft": "#261E0E",
-    "danger": "#E2584E",
-    "danger_soft": "#2A1210",
-    "rule": "#2E1C16",
-    "sidebar": "#0B0605",
-    "sidebar_alt": "#1F120D",
-    "sidebar_text": "#F7EDE6",
-    "sidebar_muted": "#A38B81",
-    "sidebar_active": "#26140C",
-    "hero": "#0B0605",
-    "hero_text": "#F7EDE6",
-    "hero_muted": "#CDB8AE",
-    "card": "#FFF8F3",
-    "card_text": "#1A0B06",
+    "sidebar": "#0F0F10",
+    "bg": "#141415",
+    "surface": "#19191B",
+    "surface_alt": "#232325",
+    "text": "#EDEDED",
+    "secondary": "#A1A1A6",
+    "muted": "#85858B",
+    "border": "rgba(237,237,237,0.08)",
+    "border_strong": "rgba(237,237,237,0.14)",
+    "highlight": "inset 0 1px 0 rgba(255,255,255,0.06)",
+    "accent": "#FF6A2B",
+    "accent_ink": "#FF8A57",
+    "on_accent": "#1A0A03",
+    "accent_hover": "#FF7D45",
+    "track": "#2A2A2D",
+    "fill": "#6E6E74",
+    "success": "#4CC38A",
+    "success_soft": "rgba(76,195,138,0.12)",
+    "warn": "#D9A441",
+    "warn_soft": "rgba(217,164,65,0.12)",
+    "danger": "#E5484D",
+    "danger_soft": "rgba(229,72,77,0.12)",
+    "paper": "#FDFBF7",
+    "paper_text": "#1F1B16",
 }
 
-# Daylight variant: the TerraTrace badge card (warm paper, ink, same orange).
 LIGHT = {
-    "bg": "#FFF8F3",
+    "sidebar": "#F4F4F5",
+    "bg": "#FAFAFA",
     "surface": "#FFFFFF",
-    "surface_alt": "#F6EAE2",
-    "text": "#1A0B06",
-    "muted": "#7A5C50",
-    "border": "#E3D2C8",
-    "brand": "#D9480F",
-    "brand_soft": "#FBE3D6",
-    "on_brand": "#FFF8F3",
-    "accent": "#D9480F",
-    "accent_soft": "rgba(255,90,31,0.10)",
-    "success": "#2E7D4F",
-    "success_soft": "#DFF0E5",
-    "warn": "#8A5A10",
-    "warn_soft": "#F7EBCF",
-    "danger": "#B3322A",
-    "danger_soft": "#F8DEDB",
-    "rule": "#E3D2C8",
-    "sidebar": "#0B0605",
-    "sidebar_alt": "#1F120D",
-    "sidebar_text": "#F7EDE6",
-    "sidebar_muted": "#A38B81",
-    "sidebar_active": "#26140C",
-    "hero": "#0B0605",
-    "hero_text": "#F7EDE6",
-    "hero_muted": "#CDB8AE",
-    "card": "#FFF8F3",
-    "card_text": "#1A0B06",
+    "surface_alt": "#F4F4F5",
+    "text": "#171717",
+    "secondary": "#525252",
+    "muted": "#737373",
+    "border": "rgba(23,23,23,0.08)",
+    "border_strong": "rgba(23,23,23,0.14)",
+    "highlight": "0 1px 2px rgba(0,0,0,0.05)",
+    "accent": "#FF6A2B",
+    "accent_ink": "#C2410C",
+    "on_accent": "#1A0A03",
+    "accent_hover": "#FF7D45",
+    "track": "#ECECEE",
+    "fill": "#A1A1A6",
+    "success": "#16A34A",
+    "success_soft": "rgba(22,163,74,0.10)",
+    "warn": "#A16207",
+    "warn_soft": "rgba(161,98,7,0.10)",
+    "danger": "#DC2626",
+    "danger_soft": "rgba(220,38,38,0.08)",
+    "paper": "#FFFFFF",
+    "paper_text": "#1F1B16",
 }
 
-FONT_DISPLAY = "'Dela Gothic One', 'Archivo', sans-serif"
 FONT_SANS = "'Archivo', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif"
 FONT_MONO = "'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace"
 
@@ -92,7 +89,6 @@ def font_css() -> str:
     """@font-face rules with the bundled fonts inlined as data URIs."""
     rules = []
     for family, file in (
-        ("Dela Gothic One", "DelaGothicOne-latin.woff2"),
         ("Archivo", "Archivo-latin-wght.woff2"),
         ("Geist Mono", "GeistMono-Variable.woff2"),
     ):
@@ -112,39 +108,31 @@ _CSS = Template(
     <style>
     $fonts
     :root {
+        --consul-sidebar: $sidebar;
         --consul-bg: $bg;
         --consul-surface: $surface;
         --consul-surface-alt: $surface_alt;
         --consul-text: $text;
+        --consul-secondary: $secondary;
         --consul-muted: $muted;
         --consul-border: $border;
-        --consul-brand: $brand;
-        --consul-brand-soft: $brand_soft;
-        --consul-on-brand: $on_brand;
+        --consul-border-strong: $border_strong;
         --consul-accent: $accent;
-        --consul-accent-soft: $accent_soft;
+        --consul-accent-ink: $accent_ink;
+        --consul-on-accent: $on_accent;
         --consul-success: $success;
         --consul-success-soft: $success_soft;
         --consul-warn: $warn;
         --consul-warn-soft: $warn_soft;
         --consul-danger: $danger;
         --consul-danger-soft: $danger_soft;
-        --consul-rule: $rule;
-        --consul-sidebar: $sidebar;
-        --consul-sidebar-alt: $sidebar_alt;
-        --consul-sidebar-text: $sidebar_text;
-        --consul-sidebar-muted: $sidebar_muted;
-        --consul-sidebar-active: $sidebar_active;
-        --consul-hero: $hero;
-        --consul-hero-text: $hero_text;
-        --consul-hero-muted: $hero_muted;
-        --consul-signal: #FF5A1F;
-        --consul-display: $font_display;
         --consul-sans: $font_sans;
         --consul-mono: $font_mono;
-        --consul-radius: 6px;
-        --consul-radius-sm: 4px;
-        --consul-ease: cubic-bezier(0.16, 1, 0.3, 1);
+        --consul-r-sm: 6px;
+        --consul-r: 8px;
+        --consul-r-card: 12px;
+        --consul-r-panel: 16px;
+        --consul-ease: cubic-bezier(0.22, 1, 0.36, 1);
     }
 
     html, body, [class*="css"], .stApp, [data-testid="stAppViewContainer"] {
@@ -154,55 +142,36 @@ _CSS = Template(
         background: var(--consul-bg);
         color: var(--consul-text);
     }
-    .stApp::before {
-        content: "";
-        position: fixed;
-        inset: 0;
-        pointer-events: none;
-        z-index: 0;
-        background: radial-gradient(900px 520px at 85% -10%, $accent_soft, transparent 60%);
-    }
     header[data-testid="stHeader"] { background: transparent !important; }
     [data-testid="stToolbarActions"], [data-testid="stAppDeployButton"],
     [data-testid="stMainMenu"], [data-testid="stDecoration"] { display: none !important; }
     .block-container {
-        max-width: 1320px;
-        padding-top: 2.2rem;
-        padding-bottom: 4.5rem;
+        max-width: 1440px;
+        padding: 32px 32px 64px 32px;
     }
-    h1, h2, h3 {
-        font-family: var(--consul-display);
-        color: var(--consul-text);
-        letter-spacing: -.03em;
-        font-weight: 400;
-    }
-    h4 {
+    h1, h2, h3, h4 {
         font-family: var(--consul-sans);
         color: var(--consul-text);
-        font-weight: 650;
-        letter-spacing: -.01em;
+        font-weight: 500;
+        letter-spacing: 0;
     }
+    h1 { letter-spacing: -0.02em; }
     h5 {
-        font-family: var(--consul-mono);
-        color: var(--consul-accent);
-        letter-spacing: .04em;
-        font-size: .78rem !important;
+        font-family: var(--consul-sans);
+        color: var(--consul-secondary);
+        font-size: 14px !important;
         font-weight: 500 !important;
-        margin-top: 1.7rem !important;
-        padding-bottom: .4rem;
+        margin-top: 32px !important;
+        padding-bottom: 8px;
         border-bottom: 1px solid var(--consul-border);
     }
-    p, span, label, li {
-        color: var(--consul-text);
-    }
-    small, .consul-muted {
-        color: var(--consul-muted) !important;
-    }
-    a { color: var(--consul-accent); text-underline-offset: 3px; }
+    p, span, label, li { color: var(--consul-text); }
+    small, .consul-muted { color: var(--consul-muted) !important; }
+    a { color: var(--consul-accent-ink); text-underline-offset: 3px; }
     hr { border-color: var(--consul-border); }
     code, pre, kbd {
         font-family: var(--consul-mono) !important;
-        font-size: .8rem !important;
+        font-size: 13px !important;
     }
     [data-testid="stIconMaterial"], .material-symbols-rounded {
         font-family: "Material Symbols Rounded" !important;
@@ -211,386 +180,282 @@ _CSS = Template(
     /* ---- Sidebar ------------------------------------------------------- */
     [data-testid="stSidebar"] {
         background: var(--consul-sidebar);
-        border-right: 1px solid #2E1C16;
+        border-right: 1px solid var(--consul-border);
     }
-    [data-testid="stSidebar"] .block-container {
-        padding: 1.3rem 1rem 2rem 1rem;
-    }
-    [data-testid="stSidebar"] p,
-    [data-testid="stSidebar"] span,
-    [data-testid="stSidebar"] label,
-    [data-testid="stSidebar"] li {
-        color: var(--consul-sidebar-text);
-    }
-    [data-testid="stSidebar"] small,
-    [data-testid="stSidebar"] .consul-muted,
-    [data-testid="stSidebar"] .consul-side-muted {
-        color: var(--consul-sidebar-muted) !important;
-    }
+    [data-testid="stSidebar"] [data-testid="stVerticalBlock"] { gap: 2px; }
+    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] { margin-bottom: 0 !important; }
+    [data-testid="stSidebar"] [data-testid="stSidebarUserContent"] { padding: 24px 16px 32px 16px; }
     [data-testid="stSidebar"] .stButton > button {
-        position: relative;
         width: 100%;
-        justify-content: flex-start;
-        text-align: left;
-        min-height: 2.3rem;
-        padding: .5rem .75rem;
+        min-height: 34px;
+        padding: 6px 12px;
         border: 1px solid transparent;
-        border-radius: var(--consul-radius-sm);
+        border-radius: var(--consul-r);
         background: transparent;
-        color: var(--consul-sidebar-muted);
+        color: var(--consul-secondary);
         font-family: var(--consul-sans);
-        font-size: .9rem;
-        font-weight: 500;
+        font-size: 14px;
+        font-weight: 400;
         box-shadow: none;
-        transition: background .2s, color .2s;
+        transition: background-color .15s var(--consul-ease), color .15s var(--consul-ease);
     }
+    [data-testid="stSidebar"] .stButton > button > div { width: 100%; justify-content: flex-start; }
+    [data-testid="stSidebar"] .stButton > button p { text-align: left; color: inherit !important; font-size: 14px; }
     [data-testid="stSidebar"] .stButton > button:hover {
-        background: var(--consul-sidebar-alt);
-        color: var(--consul-sidebar-text);
+        background: var(--consul-surface);
+        color: var(--consul-text);
         border-color: transparent;
     }
-    [data-testid="stSidebar"] .stButton > button[kind="primary"] {
-        background: var(--consul-sidebar-active);
-        color: var(--consul-sidebar-text);
-        border-color: transparent;
-        font-weight: 650;
-        box-shadow: inset 3px 0 0 var(--consul-signal);
-    }
+    [data-testid="stSidebar"] .stButton > button[kind="primary"],
     [data-testid="stSidebar"] .stButton > button[kind="primary"]:hover {
-        background: var(--consul-sidebar-active);
-        color: var(--consul-sidebar-text);
-        transform: none;
-    }
-    [data-testid="stSidebar"] .stButton > button > div {
-        width: 100%;
-        justify-content: flex-start;
-    }
-    [data-testid="stSidebar"] .stButton > button p {
-        text-align: left;
-        color: inherit !important;
-    }
-    [data-testid="stSidebar"] [data-testid="stToggle"] label span {
-        color: var(--consul-sidebar-muted) !important;
-    }
-    [data-testid="stSidebar"] .stAlert {
-        background: var(--consul-sidebar-alt);
-        border: 1px solid #2E1C16;
+        background: var(--consul-surface-alt);
+        color: var(--consul-text);
+        border-color: var(--consul-border);
+        box-shadow: $highlight;
+        font-weight: 500;
     }
 
     .consul-brandmark {
         display: flex;
         align-items: center;
-        gap: .7rem;
-        margin: .1rem 0 1.4rem 0;
+        gap: 10px;
+        margin: 0 0 24px 4px;
     }
     .consul-brandmark .mark {
-        width: 38px;
-        height: 38px;
-        border-radius: var(--consul-radius-sm);
-        background: var(--consul-signal);
-        color: #1A0700;
+        width: 28px;
+        height: 28px;
+        border-radius: var(--consul-r-sm);
+        background: var(--consul-accent);
+        color: var(--consul-on-accent);
         display: flex;
         align-items: center;
         justify-content: center;
-        font-family: var(--consul-display);
-        font-size: 1.2rem;
+        font-family: var(--consul-sans);
+        font-weight: 600;
+        font-size: 15px;
         line-height: 1;
     }
     .consul-brandmark .name {
-        color: var(--consul-sidebar-text);
-        font-family: var(--consul-display);
-        font-size: 1.55rem;
-        letter-spacing: -.02em;
+        color: var(--consul-text);
+        font-size: 17px;
+        font-weight: 600;
         line-height: 1;
     }
-    .consul-brandmark .name span { color: var(--consul-signal); }
     .consul-brandmark .tag {
-        color: var(--consul-sidebar-muted);
-        font-family: var(--consul-mono);
-        font-size: .68rem;
-        letter-spacing: .04em;
-        margin-top: .3rem;
+        color: var(--consul-muted);
+        font-size: 12px;
+        margin-top: 4px;
     }
     .consul-nav-label {
-        color: var(--consul-signal);
-        font-family: var(--consul-mono);
-        font-size: .68rem;
-        letter-spacing: .06em;
-        text-transform: uppercase;
-        margin: 1.15rem 0 .35rem .75rem;
+        color: var(--consul-muted);
+        font-size: 12px;
+        font-weight: 500;
+        line-height: 16px;
+        margin: 0;
+        padding: 20px 0 8px 12px;
     }
     .consul-side-profile {
         display: flex;
-        gap: .65rem;
+        gap: 10px;
         align-items: center;
-        border-top: 1px solid #2E1C16;
-        padding: .9rem .2rem .2rem .2rem;
-        margin-top: .6rem;
+        border-top: 1px solid var(--consul-border);
+        padding: 16px 4px 4px 4px;
+        margin-top: 8px;
     }
     .consul-avatar {
         width: 32px;
         height: 32px;
         flex: 0 0 32px;
-        border-radius: var(--consul-radius-sm);
-        border: 1px solid #2E1C16;
-        background: var(--consul-sidebar-alt);
-        color: var(--consul-signal);
+        border-radius: 50%;
+        border: 1px solid var(--consul-border-strong);
+        background: var(--consul-surface-alt);
+        color: var(--consul-secondary);
         display: flex;
         align-items: center;
         justify-content: center;
         font-family: var(--consul-mono);
-        font-size: .72rem;
+        font-size: 12px;
     }
-    .consul-side-name {
-        color: var(--consul-sidebar-text);
-        font-size: .86rem;
-        font-weight: 600;
-        line-height: 1.2;
-    }
-    .consul-side-muted {
-        color: var(--consul-sidebar-muted);
-        font-family: var(--consul-mono);
-        font-size: .64rem;
-        line-height: 1.5;
-    }
-    [data-testid="stSidebar"] .consul-divider {
-        background: #2E1C16;
-        margin: 1rem 0;
-    }
+    .consul-side-name { color: var(--consul-text); font-size: 14px; font-weight: 500; line-height: 1.3; }
+    .consul-side-muted { color: var(--consul-muted); font-family: var(--consul-mono); font-size: 12px; line-height: 1.5; }
+    [data-testid="stSidebar"] .consul-divider { margin: 16px 0; }
     .consul-side-footer {
-        color: #6E5A52;
-        font-family: var(--consul-mono);
-        font-size: .64rem;
+        color: var(--consul-muted);
+        font-size: 12px;
         line-height: 1.5;
-        border-top: 1px solid #2E1C16;
-        margin-top: 1rem;
-        padding-top: .8rem;
+        border-top: 1px solid var(--consul-border);
+        margin-top: 16px;
+        padding-top: 12px;
     }
 
     /* ---- Page header --------------------------------------------------- */
     .consul-page-head {
-        border-bottom: 1px solid var(--consul-rule);
-        padding-bottom: 1.2rem;
-        margin-bottom: 1.6rem;
+        border-bottom: 1px solid var(--consul-border);
+        padding-bottom: 20px;
+        margin-bottom: 24px;
     }
     .consul-eyebrow {
-        color: var(--consul-accent);
+        color: var(--consul-muted);
         font-family: var(--consul-mono);
-        font-size: .8rem;
-        font-weight: 500;
-        letter-spacing: .04em;
-        margin-bottom: .35rem;
+        font-size: 12px;
+        margin-bottom: 8px;
     }
     .consul-page-title {
-        font-family: var(--consul-display);
-        font-size: clamp(2.2rem, 3.8vw, 3.2rem);
-        letter-spacing: -.035em;
-        line-height: 1.04;
-        margin: 0 0 .55rem 0;
+        font-size: 32px;
+        font-weight: 500;
+        letter-spacing: -0.01em;
+        line-height: 1.15;
+        margin: 0 0 8px 0;
         color: var(--consul-text);
     }
     .consul-page-sub {
-        color: var(--consul-muted);
-        font-size: 1.05rem;
+        color: var(--consul-secondary);
+        font-size: 15px;
         line-height: 1.5;
-        max-width: 62ch;
+        max-width: 64ch;
         margin: 0;
     }
-    .consul-section-intro {
-        color: var(--consul-muted);
-        font-size: .92rem;
-        margin: -.2rem 0 .8rem 0;
-    }
+    .consul-section-intro { color: var(--consul-secondary); font-size: 14px; margin: -4px 0 12px 0; }
 
     /* ---- Cards / hero -------------------------------------------------- */
     .consul-card {
         background: var(--consul-surface);
         border: 1px solid var(--consul-border);
-        border-radius: var(--consul-radius);
-        padding: 1rem 1.15rem;
-        transition: background .2s, border-color .2s;
+        border-radius: var(--consul-r-card);
+        padding: 20px;
+        transition: border-color .15s var(--consul-ease);
     }
-    .consul-card:hover { border-color: color-mix(in srgb, var(--consul-accent) 35%, var(--consul-border)); }
-    .consul-card + .consul-card { margin-top: .75rem; }
+    .consul-card:hover { border-color: var(--consul-border-strong); }
+    .consul-card + .consul-card { margin-top: 12px; }
 
-    /* Colour-block opening: dark panel, diagonal orange slab, giant headline. */
     .consul-hero {
-        position: relative;
-        overflow: hidden;
-        isolation: isolate;
-        background: var(--consul-hero);
-        color: var(--consul-hero-text);
-        border-radius: 8px;
-        border: 1px solid #2E1C16;
-        padding: 2.6rem 44% 2.4rem 2.4rem;
-        min-height: 250px;
+        background: var(--consul-surface);
+        border: 1px solid var(--consul-border);
+        border-radius: var(--consul-r-panel);
+        padding: 32px;
     }
-    .consul-hero::before {
-        content: "";
-        position: absolute;
-        inset: 0;
-        z-index: -1;
-        background: var(--consul-signal);
-        clip-path: polygon(70% 0, 100% 0, 100% 100%, 56% 100%);
-    }
-    .consul-hero::after {
-        content: "C";
-        position: absolute;
-        right: 6%;
-        top: 50%;
-        transform: translateY(-50%) rotate(-7deg);
-        z-index: -1;
-        font-family: var(--consul-display);
-        font-size: 15rem;
-        line-height: 1;
-        color: #1A0700;
-        opacity: .9;
-    }
-    .consul-hero h1, .consul-hero p, .consul-hero span { color: var(--consul-hero-text) !important; }
     .consul-hero h1 {
-        font-family: var(--consul-display);
-        font-size: clamp(2.2rem, 4.4vw, 3.6rem) !important;
-        letter-spacing: -.045em;
-        line-height: .98;
+        font-size: 40px !important;
+        font-weight: 500 !important;
+        letter-spacing: -0.02em;
+        line-height: 1.08;
+        max-width: 22ch;
     }
-    .consul-hero p { color: var(--consul-hero-muted) !important; opacity: 1 !important; }
-    .consul-hero .consul-eyebrow { color: var(--consul-signal) !important; }
+    .consul-hero p { color: var(--consul-secondary) !important; max-width: 36rem; }
     .consul-hero .consul-hero-note {
-        display: inline-block;
-        color: #A38B81 !important;
+        color: var(--consul-muted) !important;
         font-family: var(--consul-mono);
-        font-size: .76rem;
-        border: 1px solid #2E1C16;
-        border-radius: var(--consul-radius-sm);
-        padding: .45rem .7rem;
-        margin-top: 1.3rem;
-        background: rgba(11,6,5,.6);
+        font-size: 12px;
+        margin-top: 20px;
+        font-variant-numeric: tabular-nums;
     }
 
     /* ---- Metrics / pipeline -------------------------------------------- */
     [data-testid="stMetric"] {
         background: var(--consul-surface);
         border: 1px solid var(--consul-border);
-        border-radius: var(--consul-radius);
-        padding: 1rem 1.1rem .9rem 1.1rem;
+        border-radius: var(--consul-r-card);
+        padding: 20px;
     }
-    [data-testid="stMetricLabel"] p {
-        color: var(--consul-muted);
-        font-family: var(--consul-sans);
-        font-size: .82rem !important;
-    }
+    [data-testid="stMetricLabel"] p { color: var(--consul-secondary); font-size: 14px !important; }
     [data-testid="stMetricValue"] {
         color: var(--consul-text);
         font-family: var(--consul-mono);
         font-weight: 500;
-        letter-spacing: -.02em;
+        font-size: 30px !important;
         font-variant-numeric: tabular-nums;
     }
-    [data-testid="stColumn"]:first-child [data-testid="stMetricValue"] { color: var(--consul-accent); }
     .consul-pipeline {
         background: var(--consul-surface);
         border: 1px solid var(--consul-border);
-        border-radius: var(--consul-radius);
-        padding: 1.1rem 1.25rem 1.2rem 1.25rem;
-        margin-top: .9rem;
+        border-radius: var(--consul-r-card);
+        padding: 20px 24px 24px 24px;
+        margin-top: 16px;
     }
     .consul-pipeline-head {
         display: flex;
         justify-content: space-between;
         align-items: baseline;
-        gap: 1rem;
-        margin-bottom: .8rem;
+        gap: 16px;
+        margin-bottom: 16px;
     }
-    .consul-pipeline-head b {
-        font-family: var(--consul-display);
-        font-size: 1.15rem;
-        font-weight: 400;
-        letter-spacing: -.02em;
-    }
-    .consul-pipeline-head span {
-        color: var(--consul-accent);
-        font-family: var(--consul-mono);
-        font-size: .72rem;
-    }
+    .consul-pipeline-head b { font-size: 16px; font-weight: 500; }
+    .consul-pipeline-head span { color: var(--consul-muted); font-family: var(--consul-mono); font-size: 12px; }
     .consul-pipeline-row {
         display: grid;
-        grid-template-columns: 7.2rem 1fr 2.4rem;
+        grid-template-columns: 120px 1fr 48px;
         align-items: center;
-        gap: .8rem;
-        margin: .42rem 0;
+        gap: 12px;
+        margin: 8px 0;
     }
-    .consul-pipeline-label {
-        color: var(--consul-muted);
-        font-size: .82rem;
-    }
-    .consul-pipeline-track {
-        height: 4px;
-        border-radius: 2px;
-        background: var(--consul-surface-alt);
-        overflow: hidden;
-    }
-    .consul-pipeline-fill {
-        height: 100%;
-        border-radius: 2px;
-        background: var(--consul-accent);
-        transform-origin: left;
-    }
+    .consul-pipeline-label { color: var(--consul-secondary); font-size: 14px; }
+    .consul-pipeline-track { height: 6px; border-radius: 3px; background: $track; overflow: hidden; }
+    .consul-pipeline-fill { height: 100%; border-radius: 3px; background: $fill; }
+    .consul-pipeline-row:nth-child(3) .consul-pipeline-fill { background: var(--consul-accent); }
     .consul-pipeline-value {
         color: var(--consul-text);
         font-family: var(--consul-mono);
-        font-size: .86rem;
+        font-size: 14px;
         text-align: right;
         font-variant-numeric: tabular-nums;
     }
 
-    /* ---- Badges / flags ------------------------------------------------ */
+    /* ---- Badges / flags / signature ------------------------------------ */
     .consul-badge {
         display: inline-flex;
         align-items: center;
-        gap: .3rem;
-        padding: .2rem .55rem;
-        border-radius: var(--consul-radius-sm);
+        gap: 4px;
+        padding: 2px 8px;
+        border-radius: var(--consul-r-sm);
         font-family: var(--consul-mono);
-        font-size: .7rem;
-        font-weight: 500;
+        font-size: 12px;
+        font-weight: 400;
         border: 1px solid transparent;
         white-space: nowrap;
     }
-    .consul-badge.neutral {
+    .consul-badge.neutral, .consul-badge.brand {
         background: var(--consul-surface-alt);
-        color: var(--consul-muted);
+        color: var(--consul-secondary);
         border-color: var(--consul-border);
     }
-    .consul-badge.brand { background: var(--consul-brand-soft); color: var(--consul-brand); }
+    .consul-badge.brand { color: var(--consul-text); }
     .consul-badge.success { background: var(--consul-success-soft); color: var(--consul-success); }
     .consul-badge.warn { background: var(--consul-warn-soft); color: var(--consul-warn); }
     .consul-badge.danger { background: var(--consul-danger-soft); color: var(--consul-danger); }
+    .consul-stamp {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 0 6px;
+        height: 20px;
+        border: 1px solid var(--consul-success);
+        border-radius: 4px;
+        color: var(--consul-success);
+        font-family: var(--consul-mono);
+        font-size: 11px;
+        line-height: 1;
+        vertical-align: 2px;
+    }
+    .consul-stamp::before { content: "\\2713"; }
     .consul-flag {
         border-left: 2px solid var(--consul-warn);
         background: var(--consul-warn-soft);
-        padding: .55rem .75rem;
-        border-radius: 0 var(--consul-radius-sm) var(--consul-radius-sm) 0;
-        font-size: .88rem;
-        margin: .35rem 0;
+        padding: 8px 12px;
+        border-radius: 0 var(--consul-r-sm) var(--consul-r-sm) 0;
+        font-size: 14px;
+        margin: 4px 0;
     }
     .consul-flag.error { border-left-color: var(--consul-danger); background: var(--consul-danger-soft); }
     .consul-flag.ok { border-left-color: var(--consul-success); background: var(--consul-success-soft); }
 
     /* ---- Jobs ---------------------------------------------------------- */
-    .consul-job-title {
-        font-family: var(--consul-sans);
-        font-weight: 650;
-        font-size: 1.12rem;
-        line-height: 1.25;
-        margin: 0;
-        letter-spacing: -.01em;
-    }
+    .consul-job-title { font-weight: 500; font-size: 17px; line-height: 1.3; margin: 0; }
     .consul-job-meta {
         color: var(--consul-muted);
         font-family: var(--consul-mono);
-        font-size: .74rem;
-        margin-top: .3rem;
-        line-height: 1.55;
+        font-size: 12px;
+        margin-top: 4px;
+        line-height: 1.5;
     }
     .consul-score {
         display: flex;
@@ -598,78 +463,70 @@ _CSS = Template(
         align-items: center;
         justify-content: center;
         min-width: 64px;
-        padding: .4rem .55rem;
-        border-radius: var(--consul-radius-sm);
+        padding: 8px;
+        border-radius: var(--consul-r);
         background: var(--consul-surface-alt);
         border: 1px solid var(--consul-border);
     }
     .consul-score b {
         font-family: var(--consul-mono);
         font-weight: 500;
-        font-size: 1.4rem;
-        line-height: 1.05;
-        color: var(--consul-accent);
+        font-size: 22px;
+        line-height: 1.1;
+        color: var(--consul-text);
         font-variant-numeric: tabular-nums;
     }
-    .consul-score span {
-        font-family: var(--consul-mono);
-        font-size: .62rem;
-        color: var(--consul-muted);
-    }
+    .consul-score span { font-family: var(--consul-mono); font-size: 11px; color: var(--consul-muted); }
 
     /* ---- Buttons / inputs ---------------------------------------------- */
     .stButton > button, .stDownloadButton > button, .stFormSubmitButton > button {
-        border-radius: var(--consul-radius-sm);
-        border: 1px solid var(--consul-border);
-        background: var(--consul-surface);
+        border-radius: var(--consul-r);
+        border: 1px solid var(--consul-border-strong);
+        background: var(--consul-surface-alt);
         color: var(--consul-text);
         font-family: var(--consul-sans);
-        font-size: .9rem;
-        font-weight: 600;
-        min-height: 2.5rem;
-        transition: transform .15s var(--consul-ease), background .2s, border-color .2s, color .2s;
-        box-shadow: none;
+        font-size: 14px;
+        font-weight: 500;
+        min-height: 40px;
+        padding: 8px 16px;
+        box-shadow: $highlight;
+        transition: background-color .15s var(--consul-ease), border-color .15s var(--consul-ease),
+                    color .15s var(--consul-ease), transform .15s var(--consul-ease);
     }
     .stButton > button:hover, .stDownloadButton > button:hover, .stFormSubmitButton > button:hover {
-        border-color: var(--consul-accent);
-        color: var(--consul-accent);
-        background: var(--consul-surface);
+        border-color: var(--consul-muted);
+        color: var(--consul-text);
+        background: var(--consul-surface-alt);
     }
     .stButton > button:active, .stDownloadButton > button:active,
     .stFormSubmitButton > button:active { transform: scale(.98); }
     .stButton > button[kind="primary"], .stFormSubmitButton > button[kind="primary"] {
-        background: var(--consul-signal);
-        border-color: var(--consul-signal);
-        color: #1A0700;
-        font-weight: 700;
+        background: var(--consul-accent);
+        border-color: var(--consul-accent);
+        color: var(--consul-on-accent);
     }
-    .stButton > button[kind="primary"] p, .stFormSubmitButton > button[kind="primary"] p { color: #1A0700; }
+    .stButton > button[kind="primary"] p, .stFormSubmitButton > button[kind="primary"] p { color: var(--consul-on-accent); }
     .stButton > button[kind="primary"]:hover, .stFormSubmitButton > button[kind="primary"]:hover {
-        background: #FF7238;
-        border-color: #FF7238;
-        color: #1A0700;
-        transform: translateY(-1px);
+        background: $accent_hover;
+        border-color: $accent_hover;
+        color: var(--consul-on-accent);
     }
-    .stButton > button:focus-visible,
-    .stFormSubmitButton > button:focus-visible,
-    .stDownloadButton > button:focus-visible,
-    a:focus-visible, input:focus-visible, textarea:focus-visible {
-        outline: 2px solid var(--consul-signal);
+    .stButton > button:focus-visible, .stFormSubmitButton > button:focus-visible,
+    .stDownloadButton > button:focus-visible, a:focus-visible, input:focus-visible,
+    textarea:focus-visible {
+        outline: 2px solid var(--consul-accent);
         outline-offset: 2px;
         box-shadow: none;
     }
-    [data-testid="stWidgetLabel"] label,
-    [data-testid="stWidgetLabel"] p {
-        color: var(--consul-muted) !important;
-        font-family: var(--consul-sans);
-        font-size: .86rem !important;
+    [data-testid="stWidgetLabel"] label, [data-testid="stWidgetLabel"] p {
+        color: var(--consul-secondary) !important;
+        font-size: 14px !important;
     }
-    [data-baseweb="input"] input, [data-baseweb="textarea"] textarea,
-    [data-baseweb="select"] > div {
+    [data-baseweb="input"] input, [data-baseweb="textarea"] textarea, [data-baseweb="select"] > div {
         background: var(--consul-surface) !important;
-        border-color: var(--consul-border) !important;
+        border-color: var(--consul-border-strong) !important;
         color: var(--consul-text) !important;
-        border-radius: var(--consul-radius-sm) !important;
+        border-radius: var(--consul-r) !important;
     }
     [data-baseweb="input"]:focus-within, [data-baseweb="textarea"]:focus-within,
     [data-baseweb="select"] > div:focus-within {
@@ -680,179 +537,120 @@ _CSS = Template(
     [data-testid="stSliderTickBarMax"] { font-family: var(--consul-mono) !important; }
 
     /* ---- Tabs / expanders / tables ------------------------------------- */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 1.4rem;
-        border-bottom: 1px solid var(--consul-border);
-    }
+    .stTabs [data-baseweb="tab-list"] { gap: 24px; border-bottom: 1px solid var(--consul-border); }
     .stTabs [data-baseweb="tab"] {
-        font-family: var(--consul-mono);
-        font-size: .78rem;
-        color: var(--consul-muted);
+        font-size: 14px;
+        color: var(--consul-secondary);
         padding-left: 0;
         padding-right: 0;
     }
     .stTabs [aria-selected="true"] { color: var(--consul-text) !important; }
-    .stTabs [data-baseweb="tab-highlight"] { background-color: var(--consul-accent); height: 2px; }
-
+    .stTabs [data-baseweb="tab-highlight"] { background-color: var(--consul-text); height: 2px; }
     [data-testid="stExpander"] {
         background: var(--consul-surface);
         border: 1px solid var(--consul-border) !important;
-        border-radius: var(--consul-radius-sm) !important;
+        border-radius: var(--consul-r-card) !important;
         box-shadow: none;
-        margin-bottom: .65rem;
+        margin-bottom: 12px;
     }
-    [data-testid="stExpander"] summary {
-        font-family: var(--consul-sans);
-        font-size: .92rem;
-        font-weight: 600;
-        color: var(--consul-text);
-    }
+    [data-testid="stExpander"] summary { font-size: 15px; font-weight: 500; color: var(--consul-text); }
     [data-testid="stDataFrame"] {
-        border-radius: var(--consul-radius);
+        border-radius: var(--consul-r-card);
         overflow: hidden;
         border: 1px solid var(--consul-border);
     }
     [data-testid="stDataFrame"] * { font-family: var(--consul-sans); }
 
     /* ---- Feedback ------------------------------------------------------ */
-    .stAlert, [data-testid="stAlert"] {
-        border-radius: var(--consul-radius-sm);
-    }
+    .stAlert, [data-testid="stAlert"] { border-radius: var(--consul-r); }
     .stProgress > div > div > div > div { background-color: var(--consul-accent); }
     .stSpinner > div { border-top-color: var(--consul-accent) !important; }
 
     /* ---- Empty state --------------------------------------------------- */
     .consul-empty {
         background: var(--consul-surface);
-        border: 1px dashed var(--consul-border);
-        border-radius: var(--consul-radius);
-        padding: 2.7rem 1.5rem;
+        border: 1px solid var(--consul-border);
+        border-radius: var(--consul-r-card);
+        padding: 40px 24px;
         text-align: center;
     }
-    .consul-empty .consul-empty-mark {
-        width: 46px;
-        height: 46px;
-        border-radius: var(--consul-radius-sm);
-        margin: 0 auto .9rem auto;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: var(--consul-brand-soft);
-        color: var(--consul-accent);
-        font-family: var(--consul-mono);
-        font-size: .85rem;
-    }
-    .consul-empty h3 {
-        margin: 0 0 .45rem 0;
-        font-family: var(--consul-display);
-        font-size: 1.5rem;
-    }
-    .consul-empty p {
-        color: var(--consul-muted);
-        margin: 0 auto;
-        max-width: 52ch;
-        font-size: .95rem;
-        line-height: 1.55;
-    }
+    .consul-empty .consul-empty-mark { display: none; }
+    .consul-empty h3 { margin: 0 0 8px 0; font-size: 18px; font-weight: 500; }
+    .consul-empty p { color: var(--consul-secondary); margin: 0 auto; max-width: 52ch; font-size: 14px; line-height: 1.55; }
 
     /* ---- Key/value and divider ----------------------------------------- */
     .consul-kv {
         display: flex;
         justify-content: space-between;
-        gap: 1rem;
-        padding: .45rem 0;
+        gap: 16px;
+        min-height: 36px;
+        align-items: center;
         border-bottom: 1px solid var(--consul-border);
-        font-size: .9rem;
+        font-size: 14px;
     }
     .consul-kv:last-child { border-bottom: 0; }
-    .consul-kv span:first-child {
-        color: var(--consul-muted);
-        padding-top: .05rem;
-    }
-    .consul-kv span:last-child {
-        font-family: var(--consul-mono);
-        font-weight: 500;
-        text-align: right;
-    }
-    .consul-divider {
-        height: 1px;
-        background: var(--consul-border);
-        margin: 1.6rem 0;
-    }
+    .consul-kv span:first-child { color: var(--consul-secondary); }
+    .consul-kv span:last-child { font-family: var(--consul-mono); font-size: 13px; text-align: right; font-variant-numeric: tabular-nums; }
+    .consul-divider { height: 1px; background: var(--consul-border); margin: 24px 0; }
 
-    /* ---- CV preview (paper card, like the TerraTrace mission badge) ---- */
+    /* ---- CV preview: the paper moment ---------------------------------- */
     .consul-cv {
-        background: $card;
-        color: $card_text;
+        background: $paper;
+        color: $paper_text;
         border: 1px solid var(--consul-border);
-        border-radius: var(--consul-radius);
-        padding: 2.2rem 2.4rem;
+        border-radius: 4px;
+        padding: 36px 40px;
         max-width: 820px;
-        font-size: .88rem;
+        font-size: 14px;
         line-height: 1.45;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.18);
     }
-    .consul-cv, .consul-cv p, .consul-cv span, .consul-cv li, .consul-cv div, .consul-cv b {
-        color: $card_text;
-    }
-    .consul-cv h1 { color: $card_text; font-size: 1.7rem; margin: 0 0 .1rem 0; }
-    .consul-cv .cv-title { color: #3c4a5a; font-weight: 600; margin-bottom: .2rem; }
-    .consul-cv .cv-contact { color: #526171; font-size: .8rem; margin-bottom: .9rem; }
+    .consul-cv, .consul-cv p, .consul-cv span, .consul-cv li, .consul-cv div, .consul-cv b { color: $paper_text; }
+    .consul-cv h1 { color: $paper_text; font-size: 26px; margin: 0 0 2px 0; }
+    .consul-cv .cv-title { color: #3c4a5a; font-weight: 600; margin-bottom: 4px; }
+    .consul-cv .cv-contact { color: #526171; font-size: 13px; margin-bottom: 16px; }
     .consul-cv h2 {
-        color: $card_text;
-        font-size: .82rem;
+        color: $paper_text;
+        font-size: 13px;
         letter-spacing: .08em;
         text-transform: uppercase;
         border-bottom: 1px solid #d7dde5;
-        padding-bottom: .2rem;
-        margin: 1rem 0 .4rem 0;
+        padding-bottom: 4px;
+        margin: 16px 0 8px 0;
     }
-    .consul-cv .cv-entry { margin-bottom: .55rem; }
-    .consul-cv .cv-entry-head { display: flex; justify-content: space-between; gap: 1rem; }
-    .consul-cv .cv-dates { color: #667085; font-size: .78rem; white-space: nowrap; }
-    .consul-cv ul { margin: .25rem 0 .2rem 1.05rem; padding: 0; }
-    .consul-cv li { margin-bottom: .16rem; }
+    .consul-cv .cv-entry { margin-bottom: 8px; }
+    .consul-cv .cv-entry-head { display: flex; justify-content: space-between; gap: 16px; }
+    .consul-cv .cv-dates { color: #667085; font-size: 12px; white-space: nowrap; }
+    .consul-cv ul { margin: 4px 0 4px 16px; padding: 0; }
+    .consul-cv li { margin-bottom: 2px; }
     .consul-cv .cv-skills { color: #26323f; }
 
     /* ---- Footer -------------------------------------------------------- */
     .consul-app-footer {
-        margin-top: 3rem;
+        margin-top: 48px;
         border-top: 1px solid var(--consul-border);
-        padding-top: .8rem;
+        padding-top: 12px;
         color: var(--consul-muted);
-        font-family: var(--consul-mono);
-        font-size: .7rem;
+        font-size: 12px;
         text-align: center;
     }
 
     #MainMenu, footer { visibility: hidden; }
     [data-testid="stSidebarNav"] { display: none; }
 
-    /* ---- Motion -------------------------------------------------------- */
+    /* ---- Motion: one entrance, nothing loops --------------------------- */
     @media (prefers-reduced-motion: no-preference) {
-        .consul-page-head > *, .consul-hero > * { animation: consulRise .9s var(--consul-ease) both; }
-        .consul-page-head > :nth-child(2), .consul-hero > :nth-child(2) { animation-delay: .08s; }
-        .consul-page-head > :nth-child(3), .consul-hero > :nth-child(3) { animation-delay: .16s; }
-        .consul-hero > :nth-child(4) { animation-delay: .24s; }
-        .consul-hero::before { animation: consulWipe 1s var(--consul-ease) both; }
-        .consul-hero::after { animation: consulDrop 1.2s cubic-bezier(.34,1.56,.64,1) .3s both; }
-        .consul-pipeline-fill { animation: consulGrow .9s var(--consul-ease) both; }
-        @keyframes consulRise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
-        @keyframes consulWipe { from { clip-path: polygon(100% 0, 100% 0, 100% 100%, 100% 100%); } }
-        @keyframes consulDrop {
-            from { opacity: 0; transform: translateY(-90%) rotate(14deg); }
-            to { opacity: .9; transform: translateY(-50%) rotate(-7deg); }
-        }
-        @keyframes consulGrow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+        .consul-page-head, .consul-hero { animation: consulRise .4s var(--consul-ease) both; }
+        @keyframes consulRise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
     }
 
     @media (max-width: 820px) {
-        .block-container { padding-top: 1.4rem; padding-left: 1rem; padding-right: 1rem; }
-        .consul-page-title { font-size: 2.1rem; }
-        .consul-hero { padding: 1.6rem 1.4rem; }
-        .consul-hero::before { clip-path: polygon(88% 0, 100% 0, 100% 100%, 80% 100%); }
-        .consul-hero::after { display: none; }
-        .consul-cv { padding: 1.3rem; }
-        .consul-pipeline-row { grid-template-columns: 5.8rem 1fr 2rem; }
+        .block-container { padding: 24px 16px 48px 16px; }
+        .consul-page-title { font-size: 28px; }
+        .consul-hero { padding: 24px; }
+        .consul-hero h1 { font-size: 32px !important; }
+        .consul-cv { padding: 20px; }
+        .consul-pipeline-row { grid-template-columns: 96px 1fr 40px; }
     }
     @media (prefers-reduced-motion: reduce) {
         *, *::before, *::after {
@@ -866,7 +664,7 @@ _CSS = Template(
 )
 
 PAGE_KICKERS = {
-    "Dashboard": "Workspace overview",
+    "Dashboard": "Overview",
     "Ground Truth CV": "Foundation",
     "Job Discovery": "Discover",
     "Search Configuration": "Configure",
@@ -879,20 +677,12 @@ PAGE_KICKERS = {
 
 
 def palette() -> dict[str, str]:
-    # Dark is the default look; the daylight variant is opt-out via the toggle.
     return DARK if st.session_state.get("dark_mode", True) else LIGHT
 
 
 def inject_css() -> None:
-    colors = palette()
     st.markdown(
-        _CSS.substitute(
-            **colors,
-            fonts=font_css(),
-            font_display=FONT_DISPLAY,
-            font_sans=FONT_SANS,
-            font_mono=FONT_MONO,
-        ),
+        _CSS.substitute(**palette(), fonts=font_css(), font_sans=FONT_SANS, font_mono=FONT_MONO),
         unsafe_allow_html=True,
     )
 
@@ -901,10 +691,10 @@ def apply_branding() -> None:
     st.sidebar.markdown(
         """
         <div class="consul-brandmark">
-            <div class="mark">C</div>
+            <div class="mark">c</div>
             <div>
-                <div class="name">consul<span>.</span></div>
-                <div class="tag">Career mission console</div>
+                <div class="name">consul</div>
+                <div class="tag">Evidence-checked job search</div>
             </div>
         </div>
         """,
