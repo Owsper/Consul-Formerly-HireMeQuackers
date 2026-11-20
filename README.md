@@ -55,7 +55,7 @@ The central rule is simple:
 | **Sources** | 13 connectors: nine ATS platforms, two aggregators, web search, generic career pages |
 | **Documents** | ATS-safe DOCX, PDF and TXT generated from a fixed master template |
 | **Privacy** | Local data only, redacting logs, SSRF protection, export/backup/delete controls |
-| **Tests** | 109 tests, all HTTP mocked; suite runs in roughly 47 seconds |
+| **Tests** | 109 tests, all HTTP mocked; suite runs in about 40–50 seconds |
 
 ### Design principles
 
@@ -1026,7 +1026,7 @@ Coverage includes:
 - all nine UI pages via Streamlit `AppTest`
 - a full end-to-end workflow: profile → plan → mocked scan → scoring → CV → tracker
 
-**Last verified in this environment:** `109 passed in 46.95s` on Python 3.11.9, Windows, with
+**Last verified in this environment:** `109 passed` in 40–47 s on Python 3.11.9, Windows, with
 LibreOffice installed at its standard path. OCR was not installed, so OCR-specific paths were not
 exercised here.
 
@@ -1067,7 +1067,7 @@ exercised here.
 | All sources `configuration_missing` | Seed variables or keys are empty | Fill them in `.env`, then **Reload .env** or **Seed boards from .env** |
 | A source is `restricted` | Site blocks automated access | Use Manual Search Assistance; CONSUL will not bypass it |
 | PDF preview uses the built-in renderer | LibreOffice not found | Install LibreOffice or set `CONSUL_SOFFICE` |
-| PDF fonts look different | Liberation Serif substitues Times New Roman | Expected; layout comparison allows metric tolerance |
+| PDF fonts look different | Liberation Serif substitutes Times New Roman | Expected; layout comparison allows metric tolerance |
 | Scanned PDF extracts nothing | OCR not installed | Install Tesseract and `pytesseract`, or enter facts manually |
 | "Database could not be opened" | Permissions or invalid `DATABASE_URL` | Check `DATA_DIR` and the SQLite path |
 | Port 8501 already in use | Another Streamlit instance | `streamlit run app.py --server.port 8502` |
