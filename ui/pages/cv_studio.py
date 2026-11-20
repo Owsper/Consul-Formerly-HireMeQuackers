@@ -18,7 +18,7 @@ from services.cv_service import (
     reexport, revoke_cv_approval,
 )
 from services.cv_tailoring import audit_cv_with_llm
-from services.document_export import pdf_render_source
+from services.document_export import cv_to_text, pdf_render_source
 from services.job_service import get_match, list_jobs
 from services.master_template import MASTER_FILENAME
 from services.profile_service import get_active_profile
@@ -197,6 +197,48 @@ def _render_versions(job_id: str) -> None:
     else:
         st.info("No PDF preview is available for this version. The editable DOCX is still intact.")
         st.markdown(c.render_cv_html(cv), unsafe_allow_html=True)
+
+    ats = validation.ats_report or {}
+    if ats:
+        st.markdown("##### ATS readiness")
+        risk = str(ats.get("parse_risk") or "unknown")
+        risk_tone = {"low": "success", "medium": "warn", "high": "danger"}.get(risk, "neutral")
+        must = (ats.get("keyword_coverage") or {}).get("must_have") or {}
+        quant = ats.get("quantified_bullets") or {}
+        covered = len(must.get("covered") or [])
+        available = int(must.get("available") or 0)
+        st.markdown(
+            c.badge(f"Parse risk: {risk.title()}", risk_tone)
+            + " " + c.badge(f"Must-have keywords: {covered}/{available} evidenced", "brand")
+            + " " + c.badge(f"Quantified bullets: {quant.get('with_metrics', 0)}/"
+                            f"{quant.get('total', 0)}", "neutral"),
+            unsafe_allow_html=True,
+        )
+        for reason in ats.get("parse_risk_reasons") or []:
+            st.caption(reason)
+        with st.expander("ATS details and recommended fixes"):
+            if must:
+                if must.get("covered"):
+                    st.write("**Evidenced and used:** " + ", ".join(must["covered"][:12]))
+                if must.get("missing_evidenced"):
+                    st.write("**Evidenced but not used here:** "
+                             + ", ".join(must["missing_evidenced"][:12]))
+                if must.get("unevidenced"):
+                    st.caption("Not evidenced, so never claimed: "
+                               + ", ".join(must["unevidenced"][:12]))
+            vague = (ats.get("content_quality") or {}).get("vague_responsibility_count")
+            if vague:
+                st.caption(f"Vague duty-style bullets without a result: {vague}.")
+            for tip in ats.get("recommendations") or []:
+                st.write(f"- {tip}")
+            st.caption(f"Rules version {ats.get('version', 'unknown')} · "
+                       "deterministic checks, no model judgement")
+        if ats.get("knockout_note"):
+            st.info(ats["knockout_note"])
+        with st.expander("What a parser roughly sees"):
+            st.caption("The linear text layer underneath this document. "
+                       "Formatting artefacts are excluded; real content is not.")
+            st.code(cv_to_text(cv), language="text")
 
     layout = validation.layout or {}
     st.markdown("##### Template fidelity")
