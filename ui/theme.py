@@ -10,9 +10,10 @@ Direction (unslop pass, after Damir Sokolovsky's unslop skill, CC BY 4.0):
 - Signature: the small "evidenced" stamp wherever a fact has a source.
 
 Chrome stays quiet: graphite surfaces, hairlines, three text roles and one
-ember accent used for the primary action, focus and progress only. Archivo for
-the interface, Geist Mono for figures and meta, both bundled in
-``ui/assets/fonts`` and inlined so nothing loads from the network.
+ember accent used for the primary action, focus and progress only. Instrument
+Sans for the interface, Instrument Serif for large headlines and Geist Mono for
+figures only, all bundled in ``ui/assets/fonts`` and inlined so nothing loads
+from the network.
 """
 
 from __future__ import annotations
@@ -80,7 +81,8 @@ LIGHT = {
     "paper_text": "#1F1B16",
 }
 
-FONT_SANS = "'Archivo', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif"
+FONT_SANS = "'Instrument Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif"
+FONT_SERIF = "'Instrument Serif', Georgia, 'Times New Roman', serif"
 FONT_MONO = "'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace"
 
 
@@ -88,9 +90,11 @@ FONT_MONO = "'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace"
 def font_css() -> str:
     """@font-face rules with the bundled fonts inlined as data URIs."""
     rules = []
-    for family, file in (
-        ("Archivo", "Archivo-latin-wght.woff2"),
-        ("Geist Mono", "GeistMono-Variable.woff2"),
+    for family, file, weight, style in (
+        ("Instrument Sans", "InstrumentSans-latin-wght.woff2", "400 700", "normal"),
+        ("Instrument Serif", "InstrumentSerif-latin-400.woff2", "400", "normal"),
+        ("Instrument Serif", "InstrumentSerif-latin-400-italic.woff2", "400", "italic"),
+        ("Geist Mono", "GeistMono-Variable.woff2", "100 900", "normal"),
     ):
         path = FONTS_DIR / file
         if not path.exists():
@@ -98,7 +102,7 @@ def font_css() -> str:
         data = base64.b64encode(path.read_bytes()).decode()
         rules.append(
             f"@font-face{{font-family:'{family}';src:url(data:font/woff2;base64,{data}) "
-            "format('woff2');font-weight:100 900;font-display:swap;}"
+            f"format('woff2');font-weight:{weight};font-style:{style};font-display:swap;}}"
         )
     return "\n".join(rules)
 
@@ -127,6 +131,7 @@ _CSS = Template(
         --consul-danger: $danger;
         --consul-danger-soft: $danger_soft;
         --consul-sans: $font_sans;
+        --consul-serif: $font_serif;
         --consul-mono: $font_mono;
         --consul-r-sm: 6px;
         --consul-r: 8px;
@@ -967,6 +972,36 @@ _CSS = Template(
         transition: border-color .25s var(--consul-ease), background-color .25s;
     }
     [data-testid="stFileUploaderDropzone"]:hover { border-color: var(--consul-accent) !important; }
+
+    /* ==== Type roles: serif headlines, sans labels, mono for figures only === */
+    .consul-page-title, .consul-hero h1, .consul-section-head .t, .consul-empty h3,
+    h1, h2, h3 {
+        font-family: var(--consul-serif) !important;
+        font-weight: 400 !important;
+        letter-spacing: -0.01em !important;
+    }
+    .consul-page-title { font-size: 44px !important; line-height: 1.05; }
+    .consul-hero h1 { font-size: 60px !important; line-height: 1.0; }
+    .consul-hero h1 em { font-family: var(--consul-serif); font-style: italic; font-weight: 400; }
+    .consul-section-head .t { font-size: 26px !important; }
+    .consul-eyebrow, .consul-nav-label, .consul-hero-chips span, .consul-stat-hint,
+    .consul-step-tag, .consul-section-head .n, .consul-pipeline-head span,
+    .consul-pipeline-label i, .consul-dial-center span, .consul-side-muted,
+    .consul-job-meta, .consul-badge, .consul-app-footer, .consul-cal span,
+    .consul-brandmark .tag, .stTabs [data-baseweb="tab"], .consul-side-footer {
+        font-family: var(--consul-sans) !important;
+        letter-spacing: 0 !important;
+    }
+    .stApp p, .stApp li, .stApp label, .stApp input, .stApp textarea, .stApp button,
+    .stApp [data-testid="stMarkdownContainer"], .stApp [data-testid="stCaptionContainer"] {
+        font-family: var(--consul-sans);
+    }
+    .consul-nav-label { font-size: 12px; }
+    .consul-eyebrow { font-size: 13px; }
+    @media (max-width: 820px) {
+        .consul-hero h1 { font-size: 40px !important; }
+        .consul-page-title { font-size: 34px !important; }
+    }
     @media (prefers-reduced-motion: reduce) {
         *, *::before, *::after {
             animation-duration: .01ms !important;
@@ -997,7 +1032,8 @@ def palette() -> dict[str, str]:
 
 def inject_css() -> None:
     st.markdown(
-        _CSS.substitute(**palette(), fonts=font_css(), font_sans=FONT_SANS, font_mono=FONT_MONO),
+        _CSS.substitute(**palette(), fonts=font_css(), font_sans=FONT_SANS,
+                        font_serif=FONT_SERIF, font_mono=FONT_MONO),
         unsafe_allow_html=True,
     )
 
