@@ -308,10 +308,24 @@ def _coverage(cv_text: str, terms: tuple[str, ...], evidence_text: str) -> dict[
 
 
 def _evidence_text(evidence: list[EvidenceItem]) -> str:
-    return "\n".join(
-        f"{item.label}: {item.value} {item.source_text}"
-        for item in evidence if item.status.value != "rejected"
-    )
+    """Evidence the candidate can actually claim.
+
+    Learning and interest entries are recorded honestly in the ledger, but they
+    must not make a job term look "available" to the keyword-coverage check, or
+    the CV would be nudged to claim a skill the candidate does not have yet.
+    """
+    from core.text import skill_group_status
+
+    lines: list[str] = []
+    for item in evidence:
+        if item.status.value == "rejected":
+            continue
+        if item.category in {"interest", "professional_interest"}:
+            continue
+        if item.category == "skill" and skill_group_status(item.label) != "demonstrated":
+            continue
+        lines.append(f"{item.label}: {item.value} {item.source_text}")
+    return "\n".join(lines)
 
 
 def _cv_text(cv: TailoredCV) -> str:
