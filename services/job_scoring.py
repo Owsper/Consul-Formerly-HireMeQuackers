@@ -86,7 +86,8 @@ def scoring_weights(session=None) -> dict[str, float]:
 
 
 def _candidate_text(profile: CandidateProfileData) -> str:
-    return profile.searchable_text()
+    # Learning and interest entries stay out of demonstrated evidence.
+    return profile.searchable_text(include_learning=False)
 
 
 def _job_keywords(job: JobRecord) -> set[str]:
@@ -94,7 +95,11 @@ def _job_keywords(job: JobRecord) -> set[str]:
 
 
 def _candidate_skills(profile: CandidateProfileData) -> set[str]:
-    return skill_tokens(profile.all_skills())
+    return skill_tokens(profile.demonstrated_skills())
+
+
+def _learning_skills(profile: CandidateProfileData) -> set[str]:
+    return skill_tokens(profile.learning_skills())
 
 
 def _job_required_skills(job: JobRecord) -> list[str]:
@@ -223,6 +228,7 @@ def _skill_dimension(inputs: ScoringInputs) -> DimensionScore:
     required = _job_required_skills(job)
     cand_skills = _candidate_skills(inputs.profile)
     blob = _candidate_text(inputs.profile)
+    learning = _learning_skills(inputs.profile)
 
     if not required:
         # No structured requirement: compare advert keywords with the candidate.
@@ -233,9 +239,14 @@ def _skill_dimension(inputs: ScoringInputs) -> DimensionScore:
             rationale="The advert does not list explicit requirements; scored from keyword overlap only.",
         )
 
-    matched = [s for s in required if canonical_skill(s) in cand_skills or text_contains_skill(blob, s)]
+    # A requirement is only matched when the candidate has not marked it as
+    # learning/interest. Project prose that happens to mention it is not a claim.
+    matched = [s for s in required
+               if canonical_skill(s) not in learning
+               and (canonical_skill(s) in cand_skills or text_contains_skill(blob, s))]
     missing = [s for s in required if s not in matched]
-    transfers = find_transferable(required, inputs.profile.all_skills(), _job_category(job))
+    transfers = find_transferable(required, inputs.profile.demonstrated_skills(),
+                                  _job_category(job))
     transfer_requirements = {canonical_skill(requirement) for requirement, _, _ in transfers}
     exact_missing = {canonical_skill(item) for item in missing}
     # Partial credit only for requirements that are still missing exactly.
@@ -249,6 +260,12 @@ def _skill_dimension(inputs: ScoringInputs) -> DimensionScore:
         rationale += (
             f" {credited} adjacent skill(s) earn partial credit, not equivalence: "
             + "; ".join(f"{s} → {r}" for r, s, _ in transfers[:3]) + "."
+        )
+    learning_hits = [s for s in required if canonical_skill(s) in learning]
+    if learning_hits:
+        rationale += (
+            " Listed as currently learning and therefore not counted as demonstrated: "
+            + ", ".join(learning_hits[:6]) + "."
         )
     evidence_terms = {canonical_skill(s) for s in matched}
     evidence_terms |= {canonical_skill(source) for _, source, _ in transfers}
@@ -456,12 +473,18 @@ def score_job(inputs: ScoringInputs, *, job_id: str = "",
     required = _job_required_skills(inputs.job)
     cand_skills = _candidate_skills(inputs.profile)
     blob = _candidate_text(inputs.profile)
-    matching = [s for s in required if canonical_skill(s) in cand_skills or text_contains_skill(blob, s)]
+    learning = _learning_skills(inputs.profile)
+    matching = [s for s in required
+                if canonical_skill(s) not in learning
+                and (canonical_skill(s) in cand_skills or text_contains_skill(blob, s))]
     missing = [s for s in required if s not in matching]
     category_key = _job_category(inputs.job)
-    transfers = find_transferable(required, inputs.profile.all_skills(), category_key)
+    transfers = find_transferable(required, inputs.profile.demonstrated_skills(), category_key)
     preferred_owned = [s for s in inputs.job.preferred_skills
                        if canonical_skill(s) in cand_skills or text_contains_skill(blob, s)]
+    learning_required = [s for s in required if canonical_skill(s) in learning]
+    learning_preferred = [s for s in inputs.job.preferred_skills
+                          if canonical_skill(s) in learning]
     projects, experiences = _relevant_entries(inputs.profile, _job_keywords(inputs.job))
 
     concerns = auth_concerns + language_concerns + _mandatory_employment_concerns(inputs)
@@ -502,6 +525,7 @@ def score_job(inputs: ScoringInputs, *, job_id: str = "",
         matching_skills=matching[:20],
         transferable_skills=transfer_summary(transfers),
         transferability_notes=[note for _, _, note in transfers],
+        learning_skills=list(dict.fromkeys([*learning_required, *learning_preferred]))[:20],
         role_family=category_label(category_key) if category_key else "",
         missing_required_skills=missing[:20],
         preferred_skills_held=preferred_owned[:20],
