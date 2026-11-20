@@ -28,9 +28,9 @@ def _bootstrap() -> None:
             from services.settings_service import load_ui_settings
 
             with session_scope() as session:
-                st.session_state.dark_mode = bool(load_ui_settings(session).get("dark_mode", False))
+                st.session_state.dark_mode = bool(load_ui_settings(session).get("dark_mode", True))
         except Exception:
-            st.session_state.dark_mode = False
+            st.session_state.dark_mode = True
     if "page" not in st.session_state:
         st.session_state.page = "dashboard"
 

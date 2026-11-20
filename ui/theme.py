@@ -1,82 +1,116 @@
 """Visual design system for the consul Streamlit workspace.
 
-The direction is an editorial career desk rather than a generic dashboard:
-warm paper, deep ink, serif display type, monospaced labels and a single
-terracotta accent. Tokens are centralised here so every page shares one scale
-for colour, type, spacing and state.
+The direction follows the TerraTrace mission console: warm near-black panels,
+one signal-orange accent, a heavy display face (Dela Gothic One) for headlines,
+Archivo for body copy and Geist Mono for labels and numbers. Hairline borders
+and 4px corners instead of shadows. Fonts are bundled in ``ui/assets/fonts`` and
+inlined as data URIs, so the app stays fully offline. Tokens are centralised
+here so every page shares one scale for colour, type, spacing and state.
 """
 
 from __future__ import annotations
 
+import base64
+from functools import lru_cache
+from pathlib import Path
 from string import Template
 
 import streamlit as st
 
-LIGHT = {
-    "bg": "#F2EFE7",
-    "surface": "#FCFAF5",
-    "surface_alt": "#E9E4D8",
-    "text": "#15201B",
-    "muted": "#667069",
-    "border": "#D8D1C2",
-    "brand": "#1E3D34",
-    "brand_soft": "#DCE6DF",
-    "on_brand": "#FBF8F1",
-    "accent": "#B45A3C",
-    "accent_soft": "#F3E1D8",
-    "success": "#2C6049",
-    "success_soft": "#DDEBE4",
-    "warn": "#8A5A16",
-    "warn_soft": "#F4E8CE",
-    "danger": "#9E3B35",
-    "danger_soft": "#F4DEDA",
-    "rule": "#C9C0AF",
-    "sidebar": "#14221D",
-    "sidebar_alt": "#1B2C25",
-    "sidebar_text": "#F4EFE4",
-    "sidebar_muted": "#9FAEA6",
-    "sidebar_active": "#2C4A3F",
-    "hero": "#182C24",
-    "hero_text": "#F8F3E8",
-    "shadow": "none",
-}
+FONTS_DIR = Path(__file__).parent / "assets" / "fonts"
 
 DARK = {
-    "bg": "#0F1512",
-    "surface": "#17201C",
-    "surface_alt": "#202C26",
-    "text": "#ECE8DD",
-    "muted": "#A7B2AB",
-    "border": "#2C3933",
-    "brand": "#9CC9B4",
-    "brand_soft": "#1D3028",
-    "on_brand": "#0E1713",
-    "accent": "#D68B6E",
-    "accent_soft": "#37231C",
-    "success": "#8BC7A8",
-    "success_soft": "#193127",
-    "warn": "#E2B86F",
-    "warn_soft": "#332817",
-    "danger": "#E49A92",
-    "danger_soft": "#351E1B",
-    "rule": "#334139",
-    "sidebar": "#0A100D",
-    "sidebar_alt": "#121B17",
-    "sidebar_text": "#EEE9DD",
-    "sidebar_muted": "#91A198",
-    "sidebar_active": "#23382F",
-    "hero": "#1B2E26",
-    "hero_text": "#F8F3E8",
-    "shadow": "none",
+    "bg": "#0F0806",
+    "surface": "#170D0A",
+    "surface_alt": "#1E120D",
+    "text": "#F7EDE6",
+    "muted": "#A38B81",
+    "border": "#2E1C16",
+    "brand": "#FF5A1F",
+    "brand_soft": "#2A140C",
+    "on_brand": "#1A0700",
+    "accent": "#FF5A1F",
+    "accent_soft": "rgba(255,90,31,0.10)",
+    "success": "#5DBF7E",
+    "success_soft": "#132219",
+    "warn": "#E2B54A",
+    "warn_soft": "#261E0E",
+    "danger": "#E2584E",
+    "danger_soft": "#2A1210",
+    "rule": "#2E1C16",
+    "sidebar": "#0B0605",
+    "sidebar_alt": "#1F120D",
+    "sidebar_text": "#F7EDE6",
+    "sidebar_muted": "#A38B81",
+    "sidebar_active": "#26140C",
+    "hero": "#0B0605",
+    "hero_text": "#F7EDE6",
+    "hero_muted": "#CDB8AE",
+    "card": "#FFF8F3",
+    "card_text": "#1A0B06",
 }
 
-FONT_DISPLAY = "Georgia, 'Iowan Old Style', 'Times New Roman', serif"
-FONT_SANS = "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
-FONT_MONO = "'IBM Plex Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', monospace"
+# Daylight variant: the TerraTrace badge card (warm paper, ink, same orange).
+LIGHT = {
+    "bg": "#FFF8F3",
+    "surface": "#FFFFFF",
+    "surface_alt": "#F6EAE2",
+    "text": "#1A0B06",
+    "muted": "#7A5C50",
+    "border": "#E3D2C8",
+    "brand": "#D9480F",
+    "brand_soft": "#FBE3D6",
+    "on_brand": "#FFF8F3",
+    "accent": "#D9480F",
+    "accent_soft": "rgba(255,90,31,0.10)",
+    "success": "#2E7D4F",
+    "success_soft": "#DFF0E5",
+    "warn": "#8A5A10",
+    "warn_soft": "#F7EBCF",
+    "danger": "#B3322A",
+    "danger_soft": "#F8DEDB",
+    "rule": "#E3D2C8",
+    "sidebar": "#0B0605",
+    "sidebar_alt": "#1F120D",
+    "sidebar_text": "#F7EDE6",
+    "sidebar_muted": "#A38B81",
+    "sidebar_active": "#26140C",
+    "hero": "#0B0605",
+    "hero_text": "#F7EDE6",
+    "hero_muted": "#CDB8AE",
+    "card": "#FFF8F3",
+    "card_text": "#1A0B06",
+}
+
+FONT_DISPLAY = "'Dela Gothic One', 'Archivo', sans-serif"
+FONT_SANS = "'Archivo', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif"
+FONT_MONO = "'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace"
+
+
+@lru_cache(maxsize=1)
+def font_css() -> str:
+    """@font-face rules with the bundled fonts inlined as data URIs."""
+    rules = []
+    for family, file in (
+        ("Dela Gothic One", "DelaGothicOne-latin.woff2"),
+        ("Archivo", "Archivo-latin-wght.woff2"),
+        ("Geist Mono", "GeistMono-Variable.woff2"),
+    ):
+        path = FONTS_DIR / file
+        if not path.exists():
+            continue
+        data = base64.b64encode(path.read_bytes()).decode()
+        rules.append(
+            f"@font-face{{font-family:'{family}';src:url(data:font/woff2;base64,{data}) "
+            "format('woff2');font-weight:100 900;font-display:swap;}"
+        )
+    return "\n".join(rules)
+
 
 _CSS = Template(
     """
     <style>
+    $fonts
     :root {
         --consul-bg: $bg;
         --consul-surface: $surface;
@@ -103,48 +137,59 @@ _CSS = Template(
         --consul-sidebar-active: $sidebar_active;
         --consul-hero: $hero;
         --consul-hero-text: $hero_text;
+        --consul-hero-muted: $hero_muted;
+        --consul-signal: #FF5A1F;
         --consul-display: $font_display;
         --consul-sans: $font_sans;
         --consul-mono: $font_mono;
-        --consul-radius: 10px;
-        --consul-radius-sm: 6px;
-        --consul-shadow: $shadow;
+        --consul-radius: 6px;
+        --consul-radius-sm: 4px;
+        --consul-ease: cubic-bezier(0.16, 1, 0.3, 1);
     }
 
-    html, body, [class*="css"], .stApp {
+    html, body, [class*="css"], .stApp, [data-testid="stAppViewContainer"] {
         font-family: var(--consul-sans);
     }
     .stApp {
-        background:
-            radial-gradient(900px 420px at 84% -12%, $accent_soft 0%, transparent 58%),
-            linear-gradient(180deg, $bg 0%, $bg 100%);
+        background: var(--consul-bg);
         color: var(--consul-text);
     }
+    .stApp::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: 0;
+        background: radial-gradient(900px 520px at 85% -10%, $accent_soft, transparent 60%);
+    }
+    header[data-testid="stHeader"] { background: transparent !important; }
+    [data-testid="stToolbarActions"], [data-testid="stAppDeployButton"],
+    [data-testid="stMainMenu"], [data-testid="stDecoration"] { display: none !important; }
     .block-container {
-        max-width: 1240px;
-        padding-top: 2.35rem;
+        max-width: 1320px;
+        padding-top: 2.2rem;
         padding-bottom: 4.5rem;
     }
     h1, h2, h3 {
         font-family: var(--consul-display);
         color: var(--consul-text);
-        letter-spacing: -.025em;
-        font-weight: 600;
+        letter-spacing: -.03em;
+        font-weight: 400;
     }
     h4 {
         font-family: var(--consul-sans);
         color: var(--consul-text);
+        font-weight: 650;
         letter-spacing: -.01em;
     }
     h5 {
         font-family: var(--consul-mono);
-        color: var(--consul-muted);
-        text-transform: uppercase;
-        letter-spacing: .13em;
-        font-size: .69rem !important;
+        color: var(--consul-accent);
+        letter-spacing: .04em;
+        font-size: .78rem !important;
         font-weight: 500 !important;
         margin-top: 1.7rem !important;
-        padding-bottom: .35rem;
+        padding-bottom: .4rem;
         border-bottom: 1px solid var(--consul-border);
     }
     p, span, label, li {
@@ -153,17 +198,20 @@ _CSS = Template(
     small, .consul-muted {
         color: var(--consul-muted) !important;
     }
-    a { color: var(--consul-brand); text-underline-offset: 3px; }
+    a { color: var(--consul-accent); text-underline-offset: 3px; }
     hr { border-color: var(--consul-border); }
     code, pre, kbd {
         font-family: var(--consul-mono) !important;
-        font-size: .78rem !important;
+        font-size: .8rem !important;
+    }
+    [data-testid="stIconMaterial"], .material-symbols-rounded {
+        font-family: "Material Symbols Rounded" !important;
     }
 
     /* ---- Sidebar ------------------------------------------------------- */
     [data-testid="stSidebar"] {
         background: var(--consul-sidebar);
-        border-right: 1px solid var(--consul-sidebar-active);
+        border-right: 1px solid #2E1C16;
     }
     [data-testid="stSidebar"] .block-container {
         padding: 1.3rem 1rem 2rem 1rem;
@@ -180,20 +228,21 @@ _CSS = Template(
         color: var(--consul-sidebar-muted) !important;
     }
     [data-testid="stSidebar"] .stButton > button {
+        position: relative;
         width: 100%;
         justify-content: flex-start;
         text-align: left;
-        min-height: 2.2rem;
-        padding: .48rem .65rem;
+        min-height: 2.3rem;
+        padding: .5rem .75rem;
         border: 1px solid transparent;
         border-radius: var(--consul-radius-sm);
         background: transparent;
         color: var(--consul-sidebar-muted);
         font-family: var(--consul-sans);
-        font-size: .85rem;
+        font-size: .9rem;
         font-weight: 500;
-        letter-spacing: .005em;
         box-shadow: none;
+        transition: background .2s, color .2s;
     }
     [data-testid="stSidebar"] .stButton > button:hover {
         background: var(--consul-sidebar-alt);
@@ -203,19 +252,29 @@ _CSS = Template(
     [data-testid="stSidebar"] .stButton > button[kind="primary"] {
         background: var(--consul-sidebar-active);
         color: var(--consul-sidebar-text);
-        border-color: var(--consul-sidebar-active);
-        font-weight: 600;
+        border-color: transparent;
+        font-weight: 650;
+        box-shadow: inset 3px 0 0 var(--consul-signal);
     }
     [data-testid="stSidebar"] .stButton > button[kind="primary"]:hover {
         background: var(--consul-sidebar-active);
         color: var(--consul-sidebar-text);
+        transform: none;
+    }
+    [data-testid="stSidebar"] .stButton > button > div {
+        width: 100%;
+        justify-content: flex-start;
+    }
+    [data-testid="stSidebar"] .stButton > button p {
+        text-align: left;
+        color: inherit !important;
     }
     [data-testid="stSidebar"] [data-testid="stToggle"] label span {
         color: var(--consul-sidebar-muted) !important;
     }
     [data-testid="stSidebar"] .stAlert {
         background: var(--consul-sidebar-alt);
-        border: 1px solid var(--consul-sidebar-active);
+        border: 1px solid #2E1C16;
     }
 
     .consul-brandmark {
@@ -227,46 +286,44 @@ _CSS = Template(
     .consul-brandmark .mark {
         width: 38px;
         height: 38px;
-        border-radius: 10px;
-        background: var(--consul-hero-text);
-        color: var(--consul-hero);
+        border-radius: var(--consul-radius-sm);
+        background: var(--consul-signal);
+        color: #1A0700;
         display: flex;
         align-items: center;
         justify-content: center;
         font-family: var(--consul-display);
-        font-weight: 700;
-        font-size: 1.18rem;
+        font-size: 1.2rem;
         line-height: 1;
     }
     .consul-brandmark .name {
         color: var(--consul-sidebar-text);
         font-family: var(--consul-display);
-        font-size: 1.18rem;
-        font-weight: 600;
-        letter-spacing: -.015em;
-        line-height: 1.05;
+        font-size: 1.55rem;
+        letter-spacing: -.02em;
+        line-height: 1;
     }
+    .consul-brandmark .name span { color: var(--consul-signal); }
     .consul-brandmark .tag {
         color: var(--consul-sidebar-muted);
         font-family: var(--consul-mono);
-        font-size: .58rem;
-        letter-spacing: .12em;
-        text-transform: uppercase;
-        margin-top: .22rem;
+        font-size: .68rem;
+        letter-spacing: .04em;
+        margin-top: .3rem;
     }
     .consul-nav-label {
-        color: var(--consul-sidebar-muted);
+        color: var(--consul-signal);
         font-family: var(--consul-mono);
-        font-size: .58rem;
-        letter-spacing: .16em;
+        font-size: .68rem;
+        letter-spacing: .06em;
         text-transform: uppercase;
-        margin: 1.15rem 0 .35rem .65rem;
+        margin: 1.15rem 0 .35rem .75rem;
     }
     .consul-side-profile {
         display: flex;
         gap: .65rem;
         align-items: center;
-        border-top: 1px solid var(--consul-sidebar-active);
+        border-top: 1px solid #2E1C16;
         padding: .9rem .2rem .2rem .2rem;
         margin-top: .6rem;
     }
@@ -274,41 +331,38 @@ _CSS = Template(
         width: 32px;
         height: 32px;
         flex: 0 0 32px;
-        border-radius: 50%;
-        border: 1px solid var(--consul-sidebar-active);
+        border-radius: var(--consul-radius-sm);
+        border: 1px solid #2E1C16;
         background: var(--consul-sidebar-alt);
-        color: var(--consul-sidebar-text);
+        color: var(--consul-signal);
         display: flex;
         align-items: center;
         justify-content: center;
         font-family: var(--consul-mono);
-        font-size: .7rem;
-        letter-spacing: .03em;
+        font-size: .72rem;
     }
     .consul-side-name {
         color: var(--consul-sidebar-text);
-        font-size: .82rem;
+        font-size: .86rem;
         font-weight: 600;
         line-height: 1.2;
     }
     .consul-side-muted {
         color: var(--consul-sidebar-muted);
         font-family: var(--consul-mono);
-        font-size: .58rem;
-        letter-spacing: .03em;
+        font-size: .64rem;
         line-height: 1.5;
     }
     [data-testid="stSidebar"] .consul-divider {
-        background: var(--consul-sidebar-active);
+        background: #2E1C16;
         margin: 1rem 0;
     }
     .consul-side-footer {
-        color: var(--consul-sidebar-muted);
+        color: #6E5A52;
         font-family: var(--consul-mono);
-        font-size: .56rem;
-        letter-spacing: .08em;
-        text-transform: uppercase;
-        border-top: 1px solid var(--consul-sidebar-active);
+        font-size: .64rem;
+        line-height: 1.5;
+        border-top: 1px solid #2E1C16;
         margin-top: 1rem;
         padding-top: .8rem;
     }
@@ -316,37 +370,35 @@ _CSS = Template(
     /* ---- Page header --------------------------------------------------- */
     .consul-page-head {
         border-bottom: 1px solid var(--consul-rule);
-        padding-bottom: 1.1rem;
-        margin-bottom: 1.45rem;
+        padding-bottom: 1.2rem;
+        margin-bottom: 1.6rem;
     }
     .consul-eyebrow {
         color: var(--consul-accent);
         font-family: var(--consul-mono);
-        font-size: .62rem;
+        font-size: .8rem;
         font-weight: 500;
-        letter-spacing: .17em;
-        text-transform: uppercase;
-        margin-bottom: .38rem;
+        letter-spacing: .04em;
+        margin-bottom: .35rem;
     }
     .consul-page-title {
         font-family: var(--consul-display);
-        font-size: clamp(2rem, 3.3vw, 2.75rem);
-        font-weight: 600;
+        font-size: clamp(2.2rem, 3.8vw, 3.2rem);
         letter-spacing: -.035em;
-        line-height: 1.02;
-        margin: 0 0 .42rem 0;
+        line-height: 1.04;
+        margin: 0 0 .55rem 0;
         color: var(--consul-text);
     }
     .consul-page-sub {
         color: var(--consul-muted);
-        font-size: .93rem;
-        line-height: 1.55;
-        max-width: 68ch;
+        font-size: 1.05rem;
+        line-height: 1.5;
+        max-width: 62ch;
         margin: 0;
     }
     .consul-section-intro {
         color: var(--consul-muted);
-        font-size: .86rem;
+        font-size: .92rem;
         margin: -.2rem 0 .8rem 0;
     }
 
@@ -356,114 +408,139 @@ _CSS = Template(
         border: 1px solid var(--consul-border);
         border-radius: var(--consul-radius);
         padding: 1rem 1.15rem;
-        box-shadow: var(--consul-shadow);
+        transition: background .2s, border-color .2s;
     }
+    .consul-card:hover { border-color: color-mix(in srgb, var(--consul-accent) 35%, var(--consul-border)); }
     .consul-card + .consul-card { margin-top: .75rem; }
+
+    /* Colour-block opening: dark panel, diagonal orange slab, giant headline. */
     .consul-hero {
         position: relative;
         overflow: hidden;
-        background:
-            repeating-linear-gradient(115deg, transparent 0 22px, rgba(255,255,255,.026) 22px 23px),
-            var(--consul-hero);
+        isolation: isolate;
+        background: var(--consul-hero);
         color: var(--consul-hero-text);
-        border-radius: 14px;
-        border: 1px solid var(--consul-hero);
-        padding: 2rem 2.1rem;
+        border-radius: 8px;
+        border: 1px solid #2E1C16;
+        padding: 2.6rem 44% 2.4rem 2.4rem;
+        min-height: 250px;
+    }
+    .consul-hero::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        z-index: -1;
+        background: var(--consul-signal);
+        clip-path: polygon(70% 0, 100% 0, 100% 100%, 56% 100%);
+    }
+    .consul-hero::after {
+        content: "C";
+        position: absolute;
+        right: 6%;
+        top: 50%;
+        transform: translateY(-50%) rotate(-7deg);
+        z-index: -1;
+        font-family: var(--consul-display);
+        font-size: 15rem;
+        line-height: 1;
+        color: #1A0700;
+        opacity: .9;
     }
     .consul-hero h1, .consul-hero p, .consul-hero span { color: var(--consul-hero-text) !important; }
     .consul-hero h1 {
         font-family: var(--consul-display);
-        font-weight: 500 !important;
-        letter-spacing: -.035em;
-        line-height: 1.05;
+        font-size: clamp(2.2rem, 4.4vw, 3.6rem) !important;
+        letter-spacing: -.045em;
+        line-height: .98;
     }
-    .consul-hero .consul-eyebrow { color: var(--consul-accent) !important; }
+    .consul-hero p { color: var(--consul-hero-muted) !important; opacity: 1 !important; }
+    .consul-hero .consul-eyebrow { color: var(--consul-signal) !important; }
     .consul-hero .consul-hero-note {
-        color: rgba(248,243,232,.66) !important;
+        display: inline-block;
+        color: #A38B81 !important;
         font-family: var(--consul-mono);
-        font-size: .62rem;
-        letter-spacing: .06em;
-        margin-top: 1.1rem;
+        font-size: .76rem;
+        border: 1px solid #2E1C16;
+        border-radius: var(--consul-radius-sm);
+        padding: .45rem .7rem;
+        margin-top: 1.3rem;
+        background: rgba(11,6,5,.6);
     }
 
     /* ---- Metrics / pipeline -------------------------------------------- */
     [data-testid="stMetric"] {
         background: var(--consul-surface);
         border: 1px solid var(--consul-border);
-        border-top: 2px solid var(--consul-brand);
-        border-radius: var(--consul-radius-sm);
-        padding: .8rem .9rem .7rem .9rem;
-        box-shadow: var(--consul-shadow);
+        border-radius: var(--consul-radius);
+        padding: 1rem 1.1rem .9rem 1.1rem;
     }
     [data-testid="stMetricLabel"] p {
         color: var(--consul-muted);
-        font-family: var(--consul-mono);
-        font-size: .62rem !important;
-        letter-spacing: .1em;
-        text-transform: uppercase;
+        font-family: var(--consul-sans);
+        font-size: .82rem !important;
     }
     [data-testid="stMetricValue"] {
         color: var(--consul-text);
-        font-family: var(--consul-display);
-        font-weight: 600;
-        letter-spacing: -.03em;
+        font-family: var(--consul-mono);
+        font-weight: 500;
+        letter-spacing: -.02em;
+        font-variant-numeric: tabular-nums;
     }
+    [data-testid="stColumn"]:first-child [data-testid="stMetricValue"] { color: var(--consul-accent); }
     .consul-pipeline {
         background: var(--consul-surface);
         border: 1px solid var(--consul-border);
         border-radius: var(--consul-radius);
-        padding: 1rem 1.15rem 1.1rem 1.15rem;
-        margin-top: .8rem;
+        padding: 1.1rem 1.25rem 1.2rem 1.25rem;
+        margin-top: .9rem;
     }
     .consul-pipeline-head {
         display: flex;
         justify-content: space-between;
         align-items: baseline;
         gap: 1rem;
-        margin-bottom: .75rem;
+        margin-bottom: .8rem;
     }
     .consul-pipeline-head b {
         font-family: var(--consul-display);
-        font-size: 1rem;
-        font-weight: 600;
+        font-size: 1.15rem;
+        font-weight: 400;
+        letter-spacing: -.02em;
     }
     .consul-pipeline-head span {
-        color: var(--consul-muted);
+        color: var(--consul-accent);
         font-family: var(--consul-mono);
-        font-size: .58rem;
-        letter-spacing: .1em;
-        text-transform: uppercase;
+        font-size: .72rem;
     }
     .consul-pipeline-row {
         display: grid;
-        grid-template-columns: 6.6rem 1fr 2.2rem;
+        grid-template-columns: 7.2rem 1fr 2.4rem;
         align-items: center;
-        gap: .7rem;
-        margin: .38rem 0;
+        gap: .8rem;
+        margin: .42rem 0;
     }
     .consul-pipeline-label {
         color: var(--consul-muted);
-        font-family: var(--consul-mono);
-        font-size: .6rem;
-        letter-spacing: .05em;
-        text-transform: uppercase;
+        font-size: .82rem;
     }
     .consul-pipeline-track {
-        height: 6px;
-        border-radius: 999px;
+        height: 4px;
+        border-radius: 2px;
         background: var(--consul-surface-alt);
         overflow: hidden;
     }
     .consul-pipeline-fill {
         height: 100%;
-        border-radius: 999px;
-        background: var(--consul-brand);
+        border-radius: 2px;
+        background: var(--consul-accent);
+        transform-origin: left;
     }
     .consul-pipeline-value {
         color: var(--consul-text);
         font-family: var(--consul-mono);
-        font-size: .68rem;
+        font-size: .86rem;
         text-align: right;
+        font-variant-numeric: tabular-nums;
     }
 
     /* ---- Badges / flags ------------------------------------------------ */
@@ -471,13 +548,11 @@ _CSS = Template(
         display: inline-flex;
         align-items: center;
         gap: .3rem;
-        padding: .18rem .52rem;
-        border-radius: 999px;
+        padding: .2rem .55rem;
+        border-radius: var(--consul-radius-sm);
         font-family: var(--consul-mono);
-        font-size: .6rem;
+        font-size: .7rem;
         font-weight: 500;
-        letter-spacing: .05em;
-        text-transform: uppercase;
         border: 1px solid transparent;
         white-space: nowrap;
     }
@@ -493,9 +568,9 @@ _CSS = Template(
     .consul-flag {
         border-left: 2px solid var(--consul-warn);
         background: var(--consul-warn-soft);
-        padding: .5rem .7rem;
+        padding: .55rem .75rem;
         border-radius: 0 var(--consul-radius-sm) var(--consul-radius-sm) 0;
-        font-size: .82rem;
+        font-size: .88rem;
         margin: .35rem 0;
     }
     .consul-flag.error { border-left-color: var(--consul-danger); background: var(--consul-danger-soft); }
@@ -503,19 +578,18 @@ _CSS = Template(
 
     /* ---- Jobs ---------------------------------------------------------- */
     .consul-job-title {
-        font-family: var(--consul-display);
-        font-weight: 600;
+        font-family: var(--consul-sans);
+        font-weight: 650;
         font-size: 1.12rem;
         line-height: 1.25;
         margin: 0;
-        letter-spacing: -.015em;
+        letter-spacing: -.01em;
     }
     .consul-job-meta {
         color: var(--consul-muted);
         font-family: var(--consul-mono);
-        font-size: .64rem;
-        letter-spacing: .02em;
-        margin-top: .28rem;
+        font-size: .74rem;
+        margin-top: .3rem;
         line-height: 1.55;
     }
     .consul-score {
@@ -523,22 +597,23 @@ _CSS = Template(
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        min-width: 62px;
-        padding: .35rem .5rem;
+        min-width: 64px;
+        padding: .4rem .55rem;
         border-radius: var(--consul-radius-sm);
         background: var(--consul-surface-alt);
         border: 1px solid var(--consul-border);
     }
     .consul-score b {
-        font-family: var(--consul-display);
-        font-size: 1.25rem;
+        font-family: var(--consul-mono);
+        font-weight: 500;
+        font-size: 1.4rem;
         line-height: 1.05;
+        color: var(--consul-accent);
+        font-variant-numeric: tabular-nums;
     }
     .consul-score span {
         font-family: var(--consul-mono);
-        font-size: .52rem;
-        text-transform: uppercase;
-        letter-spacing: .09em;
+        font-size: .62rem;
         color: var(--consul-muted);
     }
 
@@ -549,43 +624,45 @@ _CSS = Template(
         background: var(--consul-surface);
         color: var(--consul-text);
         font-family: var(--consul-sans);
-        font-size: .82rem;
+        font-size: .9rem;
         font-weight: 600;
-        min-height: 2.35rem;
-        transition: background .14s ease, border-color .14s ease, color .14s ease;
+        min-height: 2.5rem;
+        transition: transform .15s var(--consul-ease), background .2s, border-color .2s, color .2s;
         box-shadow: none;
     }
     .stButton > button:hover, .stDownloadButton > button:hover, .stFormSubmitButton > button:hover {
-        border-color: var(--consul-brand);
-        color: var(--consul-brand);
+        border-color: var(--consul-accent);
+        color: var(--consul-accent);
         background: var(--consul-surface);
     }
+    .stButton > button:active, .stDownloadButton > button:active,
+    .stFormSubmitButton > button:active { transform: scale(.98); }
     .stButton > button[kind="primary"], .stFormSubmitButton > button[kind="primary"] {
-        background: var(--consul-brand);
-        border-color: var(--consul-brand);
-        color: var(--consul-on-brand);
+        background: var(--consul-signal);
+        border-color: var(--consul-signal);
+        color: #1A0700;
+        font-weight: 700;
     }
+    .stButton > button[kind="primary"] p, .stFormSubmitButton > button[kind="primary"] p { color: #1A0700; }
     .stButton > button[kind="primary"]:hover, .stFormSubmitButton > button[kind="primary"]:hover {
-        background: var(--consul-brand);
-        border-color: var(--consul-brand);
-        color: var(--consul-on-brand);
-        filter: brightness(1.06);
+        background: #FF7238;
+        border-color: #FF7238;
+        color: #1A0700;
+        transform: translateY(-1px);
     }
     .stButton > button:focus-visible,
     .stFormSubmitButton > button:focus-visible,
     .stDownloadButton > button:focus-visible,
     a:focus-visible, input:focus-visible, textarea:focus-visible {
-        outline: 2px solid var(--consul-accent);
+        outline: 2px solid var(--consul-signal);
         outline-offset: 2px;
         box-shadow: none;
     }
     [data-testid="stWidgetLabel"] label,
     [data-testid="stWidgetLabel"] p {
         color: var(--consul-muted) !important;
-        font-family: var(--consul-mono);
-        font-size: .62rem !important;
-        letter-spacing: .06em;
-        text-transform: uppercase;
+        font-family: var(--consul-sans);
+        font-size: .86rem !important;
     }
     [data-baseweb="input"] input, [data-baseweb="textarea"] textarea,
     [data-baseweb="select"] > div {
@@ -599,17 +676,17 @@ _CSS = Template(
         border-color: var(--consul-accent) !important;
         box-shadow: 0 0 0 1px var(--consul-accent) !important;
     }
+    [data-testid="stSliderThumbValue"], [data-testid="stSliderTickBarMin"],
+    [data-testid="stSliderTickBarMax"] { font-family: var(--consul-mono) !important; }
 
     /* ---- Tabs / expanders / tables ------------------------------------- */
     .stTabs [data-baseweb="tab-list"] {
-        gap: 1.3rem;
+        gap: 1.4rem;
         border-bottom: 1px solid var(--consul-border);
     }
     .stTabs [data-baseweb="tab"] {
         font-family: var(--consul-mono);
-        font-size: .64rem;
-        letter-spacing: .09em;
-        text-transform: uppercase;
+        font-size: .78rem;
         color: var(--consul-muted);
         padding-left: 0;
         padding-right: 0;
@@ -626,32 +703,28 @@ _CSS = Template(
     }
     [data-testid="stExpander"] summary {
         font-family: var(--consul-sans);
-        font-size: .86rem;
+        font-size: .92rem;
         font-weight: 600;
         color: var(--consul-text);
     }
     [data-testid="stDataFrame"] {
-        border-radius: var(--consul-radius-sm);
+        border-radius: var(--consul-radius);
         overflow: hidden;
         border: 1px solid var(--consul-border);
     }
     [data-testid="stDataFrame"] * { font-family: var(--consul-sans); }
 
     /* ---- Feedback ------------------------------------------------------ */
-    .stAlert {
+    .stAlert, [data-testid="stAlert"] {
         border-radius: var(--consul-radius-sm);
-        border: 1px solid var(--consul-border);
-        background: var(--consul-surface);
     }
     .stProgress > div > div > div > div { background-color: var(--consul-accent); }
     .stSpinner > div { border-top-color: var(--consul-accent) !important; }
 
     /* ---- Empty state --------------------------------------------------- */
     .consul-empty {
-        background:
-            repeating-linear-gradient(135deg, transparent 0 18px, rgba(0,0,0,.012) 18px 19px),
-            var(--consul-surface);
-        border: 1px solid var(--consul-border);
+        background: var(--consul-surface);
+        border: 1px dashed var(--consul-border);
         border-radius: var(--consul-radius);
         padding: 2.7rem 1.5rem;
         text-align: center;
@@ -659,28 +732,26 @@ _CSS = Template(
     .consul-empty .consul-empty-mark {
         width: 46px;
         height: 46px;
-        border-radius: 50%;
-        margin: 0 auto .85rem auto;
+        border-radius: var(--consul-radius-sm);
+        margin: 0 auto .9rem auto;
         display: flex;
         align-items: center;
         justify-content: center;
-        background: var(--consul-accent-soft);
+        background: var(--consul-brand-soft);
         color: var(--consul-accent);
         font-family: var(--consul-mono);
-        font-size: .78rem;
-        letter-spacing: .04em;
+        font-size: .85rem;
     }
     .consul-empty h3 {
-        margin: 0 0 .4rem 0;
+        margin: 0 0 .45rem 0;
         font-family: var(--consul-display);
-        font-size: 1.3rem;
-        font-weight: 600;
+        font-size: 1.5rem;
     }
     .consul-empty p {
         color: var(--consul-muted);
         margin: 0 auto;
         max-width: 52ch;
-        font-size: .88rem;
+        font-size: .95rem;
         line-height: 1.55;
     }
 
@@ -689,30 +760,30 @@ _CSS = Template(
         display: flex;
         justify-content: space-between;
         gap: 1rem;
-        padding: .34rem 0;
+        padding: .45rem 0;
         border-bottom: 1px solid var(--consul-border);
-        font-size: .82rem;
+        font-size: .9rem;
     }
     .consul-kv:last-child { border-bottom: 0; }
     .consul-kv span:first-child {
         color: var(--consul-muted);
-        font-family: var(--consul-mono);
-        font-size: .62rem;
-        letter-spacing: .04em;
-        text-transform: uppercase;
-        padding-top: .08rem;
+        padding-top: .05rem;
     }
-    .consul-kv span:last-child { font-weight: 600; text-align: right; }
+    .consul-kv span:last-child {
+        font-family: var(--consul-mono);
+        font-weight: 500;
+        text-align: right;
+    }
     .consul-divider {
         height: 1px;
         background: var(--consul-border);
         margin: 1.6rem 0;
     }
 
-    /* ---- CV preview ---------------------------------------------------- */
+    /* ---- CV preview (paper card, like the TerraTrace mission badge) ---- */
     .consul-cv {
-        background: #FFFEFA;
-        color: #15201b;
+        background: $card;
+        color: $card_text;
         border: 1px solid var(--consul-border);
         border-radius: var(--consul-radius);
         padding: 2.2rem 2.4rem;
@@ -720,11 +791,14 @@ _CSS = Template(
         font-size: .88rem;
         line-height: 1.45;
     }
-    .consul-cv h1 { color: #15201b; font-size: 1.7rem; margin: 0 0 .1rem 0; }
+    .consul-cv, .consul-cv p, .consul-cv span, .consul-cv li, .consul-cv div, .consul-cv b {
+        color: $card_text;
+    }
+    .consul-cv h1 { color: $card_text; font-size: 1.7rem; margin: 0 0 .1rem 0; }
     .consul-cv .cv-title { color: #3c4a5a; font-weight: 600; margin-bottom: .2rem; }
     .consul-cv .cv-contact { color: #526171; font-size: .8rem; margin-bottom: .9rem; }
     .consul-cv h2 {
-        color: #15201b;
+        color: $card_text;
         font-size: .82rem;
         letter-spacing: .08em;
         text-transform: uppercase;
@@ -734,7 +808,6 @@ _CSS = Template(
     }
     .consul-cv .cv-entry { margin-bottom: .55rem; }
     .consul-cv .cv-entry-head { display: flex; justify-content: space-between; gap: 1rem; }
-    .consul-cv .cv-entry-head b { color: #15201b; }
     .consul-cv .cv-dates { color: #667085; font-size: .78rem; white-space: nowrap; }
     .consul-cv ul { margin: .25rem 0 .2rem 1.05rem; padding: 0; }
     .consul-cv li { margin-bottom: .16rem; }
@@ -744,24 +817,42 @@ _CSS = Template(
     .consul-app-footer {
         margin-top: 3rem;
         border-top: 1px solid var(--consul-border);
-        padding-top: .7rem;
+        padding-top: .8rem;
         color: var(--consul-muted);
         font-family: var(--consul-mono);
-        font-size: .56rem;
-        letter-spacing: .09em;
-        text-transform: uppercase;
+        font-size: .7rem;
         text-align: center;
     }
 
     #MainMenu, footer { visibility: hidden; }
     [data-testid="stSidebarNav"] { display: none; }
 
+    /* ---- Motion -------------------------------------------------------- */
+    @media (prefers-reduced-motion: no-preference) {
+        .consul-page-head > *, .consul-hero > * { animation: consulRise .9s var(--consul-ease) both; }
+        .consul-page-head > :nth-child(2), .consul-hero > :nth-child(2) { animation-delay: .08s; }
+        .consul-page-head > :nth-child(3), .consul-hero > :nth-child(3) { animation-delay: .16s; }
+        .consul-hero > :nth-child(4) { animation-delay: .24s; }
+        .consul-hero::before { animation: consulWipe 1s var(--consul-ease) both; }
+        .consul-hero::after { animation: consulDrop 1.2s cubic-bezier(.34,1.56,.64,1) .3s both; }
+        .consul-pipeline-fill { animation: consulGrow .9s var(--consul-ease) both; }
+        @keyframes consulRise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+        @keyframes consulWipe { from { clip-path: polygon(100% 0, 100% 0, 100% 100%, 100% 100%); } }
+        @keyframes consulDrop {
+            from { opacity: 0; transform: translateY(-90%) rotate(14deg); }
+            to { opacity: .9; transform: translateY(-50%) rotate(-7deg); }
+        }
+        @keyframes consulGrow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+    }
+
     @media (max-width: 820px) {
         .block-container { padding-top: 1.4rem; padding-left: 1rem; padding-right: 1rem; }
-        .consul-page-title { font-size: 2rem; }
-        .consul-hero { padding: 1.4rem; }
+        .consul-page-title { font-size: 2.1rem; }
+        .consul-hero { padding: 1.6rem 1.4rem; }
+        .consul-hero::before { clip-path: polygon(88% 0, 100% 0, 100% 100%, 80% 100%); }
+        .consul-hero::after { display: none; }
         .consul-cv { padding: 1.3rem; }
-        .consul-pipeline-row { grid-template-columns: 5.3rem 1fr 1.8rem; }
+        .consul-pipeline-row { grid-template-columns: 5.8rem 1fr 2rem; }
     }
     @media (prefers-reduced-motion: reduce) {
         *, *::before, *::after {
@@ -788,7 +879,8 @@ PAGE_KICKERS = {
 
 
 def palette() -> dict[str, str]:
-    return DARK if st.session_state.get("dark_mode") else LIGHT
+    # Dark is the default look; the daylight variant is opt-out via the toggle.
+    return DARK if st.session_state.get("dark_mode", True) else LIGHT
 
 
 def inject_css() -> None:
@@ -796,6 +888,7 @@ def inject_css() -> None:
     st.markdown(
         _CSS.substitute(
             **colors,
+            fonts=font_css(),
             font_display=FONT_DISPLAY,
             font_sans=FONT_SANS,
             font_mono=FONT_MONO,
@@ -810,8 +903,8 @@ def apply_branding() -> None:
         <div class="consul-brandmark">
             <div class="mark">C</div>
             <div>
-                <div class="name">consul</div>
-                <div class="tag">Career intelligence</div>
+                <div class="name">consul<span>.</span></div>
+                <div class="tag">Career mission console</div>
             </div>
         </div>
         """,
