@@ -55,7 +55,7 @@ The central rule is simple:
 | **Sources** | 13 connectors: nine ATS platforms, two aggregators, web search, generic career pages |
 | **Documents** | ATS-safe DOCX, PDF and TXT generated from a fixed master template |
 | **Privacy** | Local data only, redacting logs, SSRF protection, export/backup/delete controls |
-| **Tests** | 117 tests, all HTTP mocked; suite runs in about 40–50 seconds |
+| **Tests** | 121 tests, all HTTP mocked; suite runs in about 40–70 seconds |
 
 ### Design principles
 
@@ -1057,7 +1057,7 @@ Coverage includes:
 - all nine UI pages via Streamlit `AppTest`
 - a full end-to-end workflow: profile → plan → mocked scan → scoring → CV → tracker
 
-**Last verified in this environment:** `117 passed` in about 40–45 s on Python 3.11.9, Windows, with
+**Last verified in this environment:** `121 passed` in about 40–70 s on Python 3.11.9, Windows, with
 LibreOffice installed at its standard path. OCR was not installed, so OCR-specific paths were not
 exercised here.
 
