@@ -220,6 +220,19 @@ def _guess_role_family(profile: CandidateProfileData, prefs: SearchPreferences) 
 
     if prefs.specialisation and category_key:
         candidates += titles_for(category_key, prefs.specialisation, limit=3)
+
+    # Declared interests broaden discovery (for example embedded systems next to
+    # a backend title). They only generate searches; scoring still requires
+    # demonstrated evidence, so an interest never becomes a qualification.
+    # Extraction may record an interest in `additional.professional_interests`
+    # or in a skill group marked as an interest; both are equally valid.
+    interest_values = [*(profile.additional.professional_interests or []),
+                       *profile.interest_skills()]
+    interests = list(dict.fromkeys(normalize_whitespace(i) for i in interest_values if i))
+    if prefs.it_category == ANY_IT and interests:
+        for interest_key in detect_categories(" ".join(interests), [], limit=2):
+            candidates += titles_for(interest_key, limit=2)
+
     if category_key:
         candidates += titles_for(category_key, limit=4)
 
@@ -254,26 +267,45 @@ def _guess_role_family(profile: CandidateProfileData, prefs: SearchPreferences) 
     return families[:6]
 
 
+EARLY_CAREER_MARKERS = (
+    "intern", "internship", "junior", "graduate", "working student", "student",
+    "trainee", "werkstudent", "praktikum", "praktikant", "stage", "alternance",
+    "prácticas", "practicas", "becario", "stagiair", "entry level",
+)
+
+
+def _has_early_marker(title: str) -> bool:
+    lowered = normalize_whitespace(title).lower()
+    return any(marker in lowered for marker in EARLY_CAREER_MARKERS)
+
+
 def _english_titles(role_families: list[str], prefs: SearchPreferences) -> list[str]:
     titles: list[str] = []
     seniority = (prefs.seniority or "").lower()
     early = seniority in {"internship", "working_student", "graduate", "junior", "entry"}
     for role in role_families:
         titles.append(role)
-        if early and not role.lower().startswith(("junior", "graduate", "working student", "intern")):
+        if early and not role.lower().startswith(("junior", "graduate", "working student", "intern")) \
+                and not _has_early_marker(role):
             titles.append(f"Junior {role}")
     titles += [t for t in prefs.alternative_titles if t]
     employment = {e.lower() for e in prefs.employment_types}
-    if "working_student" in employment or seniority == "working_student":
+    # Never stack a second early-career marker on a title that already has one
+    # ("Backend Engineering Intern Intern").
+    if ("working_student" in employment or seniority == "working_student"):
         for role in role_families[:2]:
-            titles.append(f"Working Student {role}")
+            if not _has_early_marker(role):
+                titles.append(f"Working Student {role}")
     if "internship" in employment or seniority == "internship":
         for role in role_families[:2]:
+            if _has_early_marker(role):
+                continue
             titles.append(f"{role} Intern")
             titles.append(f"Internship {role}")
     if "graduate" in employment or seniority == "graduate":
         for role in role_families[:2]:
-            titles.append(f"Graduate {role}")
+            if not _has_early_marker(role):
+                titles.append(f"Graduate {role}")
     seen, out = set(), []
     for title in titles:
         key = normalize_whitespace(title).lower()
@@ -300,6 +332,8 @@ def _local_titles(role_families: list[str], languages: list[str],
                 translated = next(iter(title_translations(category_key, lang)), "")
             translated = translated or role
             titles.append(f"{translated}{terms['suffix']}")
+            if _has_early_marker(translated) or _has_early_marker(role):
+                continue
             if prefs.seniority in {"junior", "entry"} or "graduate" in employment:
                 titles.append(f"{terms['junior']} {translated}".strip())
             if "working_student" in employment or prefs.seniority == "working_student":
