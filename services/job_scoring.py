@@ -417,8 +417,12 @@ def _work_auth_dimension(inputs: ScoringInputs) -> tuple[DimensionScore, list[st
         return DimensionScore(name="work_authorization", weight=0, score=0.0,
                               rationale="Profile explicitly states no current work authorization."), concerns, EligiblityStatus.INELIGIBLE
     if same_country and auth.authorized_to_work is not False:
+        if job.visa_sponsorship is False and auth.sponsorship_required is True:
+            concerns.append("The advert does not offer sponsorship, but the profile states "
+                            "sponsorship is required; confirm the role is covered by your "
+                            "current residence permit.")
         return DimensionScore(name="work_authorization", weight=0, score=100.0,
-                              rationale=f"Role is in the candidate's country of residence ({auth.residence_country})."), [], EligiblityStatus.ELIGIBLE
+                              rationale=f"Role is in the candidate's country of residence ({auth.residence_country})."), concerns, EligiblityStatus.ELIGIBLE
     if job.visa_sponsorship is False and auth.sponsorship_required is True:
         concerns.append("The advert does not offer sponsorship and the profile indicates sponsorship is required.")
         return DimensionScore(name="work_authorization", weight=0, score=0.0,
