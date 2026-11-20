@@ -252,19 +252,48 @@ def extract_skills(description: str, requirement_text: str = "") -> tuple[list[s
     return required[:20], preferred[:20]
 
 
+# A qualifier written before the language ("sehr gute Deutschkenntnisse") is a
+# requirement level, not decoration. Values are existing PROFICIENCY_RANK tokens.
+_QUALIFIER_LEVELS: tuple[tuple[str, str], ...] = (
+    ("verhandlungssicher", "c1"), ("sehr gut", "b2"), ("fließend", "c1"),
+    ("fliessend", "c1"), ("muttersprachlich", "native"), ("grundkenntnis", "a2"),
+    ("grundlegend", "a2"), ("very good", "b2"), ("business fluent", "c1"),
+    ("conversational", "b1"), ("fluent", "c1"), ("native", "native"),
+    ("business", "c1"), ("professional", "c1"), ("advanced", "b2"),
+    ("intermediate", "b1"), ("basic", "a1"), ("good", "b1"), ("gut", "b1"),
+)
+_QUALIFIER_RE = (
+    r"(?:verhandlungssicher\w*|sehr gut\w*|gut\w*|fließend\w*|fliessend\w*|"
+    r"muttersprachlich\w*|grundlegend\w*|grundkenntnisse|very good|good|business fluent|"
+    r"conversational|fluent|native|business|professional|basic|intermediate|advanced)"
+)
+
+
+def _qualifier_level(qualifier: str) -> str:
+    blob = normalize_text(qualifier)
+    for prefix, level in _QUALIFIER_LEVELS:
+        if blob.startswith(prefix):
+            return level
+    return ""
+
+
 def extract_languages(description: str) -> list[str]:
     text = normalize_text(description)
     found: list[str] = []
     pattern = re.compile(
-        r"(" + "|".join(re.escape(k) for k in LANGUAGE_NAMES) + r")\s*(?:language)?\s*[\(\-–:]?\s*"
+        r"(" + _QUALIFIER_RE + r"\s+)?"
+        r"(" + "|".join(re.escape(k) for k in LANGUAGE_NAMES) + r")"
+        r"\s*(?:language|kenntnisse|knowledge|skills)?\s*(?:auf\s+)?[\(\-–:]?\s*"
         r"(fluent|native|business|professional|basic|intermediate|advanced|b2|c1|c2|a2|b1|mother tongue|muttersprache)?",
         re.I,
     )
     for match in pattern.finditer(text):
-        language = LANGUAGE_NAMES.get(match.group(1).lower())
+        language = LANGUAGE_NAMES.get(match.group(2).lower())
         if not language:
             continue
-        level = (match.group(2) or "").strip()
+        level = (match.group(3) or "").strip()
+        if not level:
+            level = _qualifier_level(match.group(1) or "")
         entry = f"{language} ({level})" if level and level.lower() not in {"language"} else language
         if entry not in found:
             found.append(entry)
@@ -274,8 +303,10 @@ def extract_languages(description: str) -> list[str]:
 def extract_sponsorship(description: str) -> bool | None:
     text = normalize_text(description)
     negative = [
-        r"(no|not|unable to|cannot|can't|do not|keine|nicht)[^.\n]{0,60}(visa|sponsor)",
-        r"(visa|sponsorship)[^.\n]{0,40}(not (available|offered|provided)|nicht möglich|keine)",
+        r"(no|not|unable to|cannot|can't|do not|kein(e|en|erlei)?|nicht|ohne)[^.\n]{0,60}"
+        r"(visa|visum|sponsor)",
+        r"(visa|visum|sponsorship)[^.\n]{0,40}(not (available|offered|provided)|nicht möglich|"
+        r"kein(e|en|erlei)?|nicht)",
         r"(must|need to) (have|hold)[^.\n]{0,40}(right to work|work permit|arbeitserlaubnis)",
     ]
     positive = [
