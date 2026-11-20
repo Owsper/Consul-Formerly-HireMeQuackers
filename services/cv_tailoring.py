@@ -19,6 +19,10 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from core.ats_rules import (  # re-exported for compatibility with existing callers
+    HEADING_TRANSLATIONS, STANDARD_HEADINGS, ats_prompt_rules, build_ats_report,
+    job_terms, standard_heading_set,
+)
 from core.logging_config import get_logger
 from core.schemas import (
     CandidateProfileData, CVBullet, CVEntry, CVHeader, CVRow, CVSection, EvidenceItem,
@@ -30,50 +34,6 @@ from core.text import (
 )
 
 logger = get_logger("cv")
-
-STANDARD_HEADINGS = {
-    "profile", "professional experience", "work experience", "experience", "project experience",
-    "academic projects", "projects", "education", "technical skills", "skills",
-    "languages", "certifications", "awards", "publications", "volunteering",
-    "additional information",
-}
-
-HEADING_TRANSLATIONS = {
-    "de": {
-        "Profile": "Profil",
-        "Professional Experience": "Berufserfahrung",
-        "Project Experience": "Projekterfahrung",
-        "Academic Projects": "Akademische Projekte",
-        "Education": "Ausbildung",
-        "Technical Skills": "Technische Kenntnisse",
-        "Languages": "Sprachen",
-        "Certifications": "Zertifikate",
-        "Awards": "Auszeichnungen",
-        "Publications": "Publikationen",
-        "Volunteering": "Ehrenamt",
-        "Additional Information": "Weitere Informationen",
-    },
-    "fr": {
-        "Professional Experience": "Expérience professionnelle",
-        "Project Experience": "Projets",
-        "Education": "Formation",
-        "Technical Skills": "Compétences techniques",
-        "Languages": "Langues",
-        "Certifications": "Certifications",
-    },
-    "es": {
-        "Professional Experience": "Experiencia profesional",
-        "Education": "Formación",
-        "Technical Skills": "Competencias técnicas",
-        "Languages": "Idiomas",
-    },
-    "nl": {
-        "Professional Experience": "Werkervaring",
-        "Education": "Opleiding",
-        "Technical Skills": "Technische vaardigheden",
-        "Languages": "Talen",
-    },
-}
 
 SUMMARY_TEMPLATES = {
     "en": "{title} with {years}. Focused on {focus}. Applying for the {job_title} role at {company}.",
@@ -157,15 +117,24 @@ def _ym(value: str | None) -> date | None:
 
 
 def _relevant_terms(job: JobRecord) -> set[str]:
-    return keyword_set(" ".join([job.title, job.description, *job.required_skills]))
+    """Job vocabulary used to rank existing bullets and projects."""
+    extracted = job_terms(job)
+    return keyword_set(" ".join([
+        job.title, job.description, *extracted.must_have, *extracted.nice_to_have,
+    ]))
 
 
 def _bullet_score(text: str, job: JobRecord, terms: set[str]) -> float:
     blob = normalize_text(text)
     score = 0.0
+    # Must-have terms dominate; preferred terms only break ties. Terms are still
+    # only ever selected from facts already present in the evidence ledger.
     for skill in job.required_skills:
         if text_contains_skill(text, skill):
             score += 6
+    for skill in job.preferred_skills:
+        if text_contains_skill(text, skill):
+            score += 2.5
     score += len(terms & keyword_set(blob)) * 1.5
     if re.search(r"\d", text):
         score += 0.5
@@ -394,21 +363,30 @@ def _skills_section(profile: CandidateProfileData, job: JobRecord, language: str
             seen.add(key)
             ranked.append(normalize_whitespace(skill))
 
-    required = {canonical_skill(s) for s in job.required_skills}
+    extracted = job_terms(job)
+    must = {canonical_skill(s) for s in extracted.must_have}
+    nice = {canonical_skill(s) for s in extracted.nice_to_have}
 
-    def is_required(skill: str) -> bool:
+    def priority(skill: str) -> int:
         key = canonical_skill(skill)
-        return key in required or any(
+        if key in must or any(
             text_contains_skill(skill, r) or text_contains_skill(r, skill)
-            for r in job.required_skills
-        )
+            for r in extracted.must_have
+        ):
+            return 0
+        if key in nice or any(
+            text_contains_skill(skill, r) or text_contains_skill(r, skill)
+            for r in extracted.nice_to_have
+        ):
+            return 1
+        return 2
 
     rows: list[CVRow] = []
     for group in profile.skills:
         ordered = sorted(
             [(index, normalize_whitespace(s)) for index, s in enumerate(group.skills)
              if s.strip()],
-            key=lambda item: (0 if is_required(item[1]) else 1, item[0]),
+            key=lambda item: (priority(item[1]), item[0]),
         )
         ordered = [skill for _, skill in ordered]
         values: list[str] = []
@@ -564,29 +542,44 @@ def validate_cv(cv: TailoredCV, profile: CandidateProfileData,
             message=f"Summary contains numeric claims not in the ledger: {', '.join(suspicious_summary)}.",
         ))
 
-    # Standard headings / ATS checks
+    # Deterministic ATS readiness (shared rules module; no LLM involved).
     headings = [s.heading for s in cv.sections]
+    ats = build_ats_report(cv, profile, evidence, job)
+    parse_checks = ats.get("parse_checks", {})
     ats_checks = {
-        "single_column": True,  # structurally guaranteed by the model and exporters
-        "standard_headings": all(h.lower() in STANDARD_HEADINGS or h.lower() in
-                                 {v.lower() for lang in HEADING_TRANSLATIONS.values()
-                                  for v in lang.values()} for h in headings),
-        "no_tables": True,
-        "no_images_or_icons": all(not re.search(r"[\U0001F300-\U0001FAFF\u2600-\u27BF]", b.text)
-                                  for b in bullets),
+        "single_column": bool(parse_checks.get("single_column", True)),
+        "standard_headings": bool(parse_checks.get("standard_headings", True)),
+        "no_tables": bool(parse_checks.get("no_tables", True)),
+        "no_images_or_icons": bool(parse_checks.get("plain_bullets", True)),
         "no_skill_bars": True,
-        "contact_details": bool(profile.personal.email or profile.personal.phone),
-        "selectable_text": True,
+        "contact_details": bool(parse_checks.get("contact_in_body", True)),
+        "selectable_text": bool(parse_checks.get("text_layer_expected", True)),
         "chronological_order": _chronological(cv),
+        "title_alignment": bool(parse_checks.get("title_alignment", False)),
     }
-    if not ats_checks["standard_headings"]:
+    accepted = standard_heading_set()
+    nonstandard = [h for h in headings if h.strip().lower() not in accepted]
+    if nonstandard:
         issues.append(ValidationIssue(
             severity="warning", code="nonstandard_heading",
-            message=f"Non-standard section heading(s): {', '.join(headings)}.",
+            message=f"Non-standard section heading(s): {', '.join(nonstandard)}.",
         ))
     if not ats_checks["contact_details"]:
         issues.append(ValidationIssue(severity="warning", code="contact_details",
                                       message="The header has no email or phone number; add one before sending."))
+    if ats.get("parse_risk") == "high":
+        issues.append(ValidationIssue(
+            severity="warning", code="ats_parse_risk",
+            message="High parse risk: " + " ".join(ats.get("parse_risk_reasons", []))[:400],
+        ))
+    must = (ats.get("keyword_coverage") or {}).get("must_have") or {}
+    if must.get("available") and must.get("ratio", 1.0) < 0.7:
+        issues.append(ValidationIssue(
+            severity="warning", code="keyword_coverage",
+            message=(f"{len(must.get('covered') or [])} of "
+                     f"{must['available']} evidenced must-have terms appear in this CV. "
+                     "Only add missing terms where the evidence already supports them."),
+        ))
 
     estimated_lines = 6 + sum(
         3 + len(e.bullets) for s in cv.sections for e in s.entries
@@ -623,7 +616,7 @@ def validate_cv(cv: TailoredCV, profile: CandidateProfileData,
         passed=passed, issues=issues, evidence_coverage=round(coverage, 3),
         unsupported_claims=unsupported[:20], matched_requirements=matched,
         unmet_requirements=unmet, removed_content=removed_content or [],
-        ats_checks=ats_checks, checked_at=datetime.now(timezone.utc),
+        ats_checks=ats_checks, ats_report=ats, checked_at=datetime.now(timezone.utc),
     )
 
 
@@ -653,12 +646,15 @@ def _llm_generate(profile: CandidateProfileData, evidence: list[EvidenceItem],
     evidence_lines = [
         f"[{e.evidence_id}] ({e.category}) {e.label}: {e.value}" for e in _active_evidence(evidence)
     ]
+    extracted = job_terms(job)
     requirements = json.dumps({
         "required_skills": job.required_skills,
         "preferred_skills": job.preferred_skills,
         "languages": job.languages,
         "education": job.education_requirements,
         "seniority": job.seniority,
+        "certifications": list(extracted.certifications),
+        "key_phrases": list(extracted.key_phrases),
         "matching_skills": match.matching_skills if match else [],
         "missing_skills": match.missing_required_skills if match else [],
     }, ensure_ascii=False)
@@ -669,6 +665,8 @@ def _llm_generate(profile: CandidateProfileData, evidence: list[EvidenceItem],
             profile_json=profile.model_dump_json(indent=2)[:24000],
             evidence_list="\n".join(evidence_lines)[:24000],
             requirements=requirements,
+            keyword_targets=extracted.prompt_text(),
+            ats_rules=ats_prompt_rules(),
             output_language=language,
         )
         cv = TailoredCV(
@@ -706,6 +704,8 @@ async def audit_cv_with_llm(cv: TailoredCV, profile: CandidateProfileData,
             profile_json=profile.model_dump_json(indent=2)[:24000],
             evidence_list="\n".join(f"[{e.evidence_id}] {e.value}" for e in _active_evidence(evidence))[:24000],
             job_json=job.model_dump_json(indent=2)[:12000],
+            ats_rules=ats_prompt_rules(),
+            keyword_targets=job_terms(job).prompt_text(),
         )
     except Exception as exc:
         logger.info("LLM CV audit skipped: %s", exc)
