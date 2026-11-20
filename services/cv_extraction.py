@@ -6,7 +6,7 @@ import io
 import re
 from dataclasses import dataclass, field
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from core.schemas import CandidateProfileData, EvidenceItem
 
@@ -161,8 +161,26 @@ def extract_document(filename: str, data: bytes, *, max_mb: int | None = None,
 # ---------------------------------------------------------------------------
 # Structured extraction (LLM) and offline heuristics
 # ---------------------------------------------------------------------------
+class EvidenceDraft(BaseModel):
+    """One ledger entry as the model returns it.
+
+    Typed rather than ``dict`` so the request can carry a real JSON schema:
+    constrained decoding removes most "model returned invalid JSON" retries,
+    and every field has a default so a partial entry still validates.
+    """
+
+    evidence_id: str = ""
+    category: str = ""
+    field_path: str = ""
+    label: str = ""
+    value: str = ""
+    source_text: str = ""
+    confidence: float = 0.0
+    inferred: bool = False
+
+
 class ProfileExtractionResponse(CandidateProfileData):  # type: ignore[name-defined]
-    evidence: list[dict] = Field(default_factory=list)
+    evidence: list[EvidenceDraft] = Field(default_factory=list)
 
 
 def _extraction_payload(text: str) -> ProfileExtractionResponse:
@@ -185,7 +203,7 @@ def structured_extraction(text: str, source_document: str) -> tuple[CandidatePro
         raise DocumentExtractionError("There is no text to extract a profile from.")
 
     response = _extraction_payload(text)
-    evidence_raw = list(response.evidence)
+    evidence_raw = [item.model_dump(mode="json") for item in response.evidence]
     payload = response.model_dump(mode="json")
     payload.pop("evidence", None)
     data = CandidateProfileData.model_validate(payload)
