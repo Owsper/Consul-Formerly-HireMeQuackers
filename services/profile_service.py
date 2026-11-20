@@ -128,7 +128,15 @@ def synthesize_evidence(data: CandidateProfileData, *, source_document: str = "m
             add("project", f"projects[{i}].achievements[{j}]", "Project achievement", ach)
 
     for i, group in enumerate(data.skills):
-        add("skill", f"skills[{i}]", group.name or "Skills", ", ".join(group.skills))
+        from core.text import skill_group_status
+
+        skill_status = skill_group_status(group.name, group.proficiency)
+        label = group.name or "Skills"
+        if skill_status == "learning" and "learning" not in label.lower():
+            label = f"{label} (currently learning)"
+        elif skill_status == "interest" and "interest" not in label.lower():
+            label = f"{label} (interest)"
+        add("skill", f"skills[{i}]", label, ", ".join(group.skills))
 
     for i, cert in enumerate(data.additional.certifications):
         add("certification", f"additional.certifications[{i}]", "Certification",
