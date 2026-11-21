@@ -121,3 +121,69 @@ def test_all_required_connectors_are_registered():
                 "company_careers"}
     assert required <= keys
     assert WorkdayConnector.key == "workday"
+
+
+# --- JobTeaser --------------------------------------------------------------
+
+JOBTEASER_URL = "https://www.jobteaser.com/en/job-offers?locale=en"
+
+
+@respx.mock
+async def test_jobteaser_reports_cloudflare_restriction_honestly():
+    from connectors.jobteaser import JobTeaserConnector
+
+    respx.get(JOBTEASER_URL).mock(return_value=httpx.Response(403, text="<html>blocked</html>"))
+    result = await _search(JobTeaserConnector(), _ctx())
+    assert result.status == SourceHealth.RESTRICTED
+    assert result.jobs == []
+    assert "Add a job manually" in result.detail
+
+
+@respx.mock
+async def test_jobteaser_challenge_body_is_not_treated_as_success():
+    from connectors.jobteaser import JobTeaserConnector
+
+    respx.get(JOBTEASER_URL).mock(return_value=httpx.Response(
+        200, text="<html><title>JobTeaser | Security checkup</title></html>"))
+    result = await _search(JobTeaserConnector(), _ctx())
+    assert result.status == SourceHealth.RESTRICTED
+    assert result.requests_ok == 0  # a challenge body is not a successful page
+    assert result.jobs == []
+
+
+@respx.mock
+async def test_jobteaser_parses_jsonld_when_a_real_page_is_served():
+    from connectors.jobteaser import JobTeaserConnector
+
+    html = """<html><head><script type="application/ld+json">
+    {"@context":"https://schema.org","@type":"JobPosting",
+     "title":"Software Engineering Intern",
+     "url":"https://www.jobteaser.com/en/job-offers/1234",
+     "hiringOrganization":{"@type":"Organization","name":"Acme"},
+     "description":"Python and SQL"}
+    </script></head><body></body></html>"""
+    respx.get(JOBTEASER_URL).mock(return_value=httpx.Response(200, text=html))
+    result = await _search(JobTeaserConnector(), _ctx())
+    assert result.status == SourceHealth.HEALTHY
+    assert len(result.jobs) == 1
+    assert result.jobs[0].title == "Software Engineering Intern"
+    assert result.jobs[0].company == "Acme"
+    assert result.jobs[0].is_snippet is False
+
+
+@respx.mock
+async def test_jobteaser_anchor_fallback_is_marked_as_snippet():
+    from connectors.jobteaser import JobTeaserConnector
+
+    html = ("<html><body><a href='/en/job-offers/50f8a3c3-7335-4449-8513-95eebcce97c4-acme-intern'>"
+            "Data Science Internship</a><a href='/en/job-offers/50f8a3c3-7335-4449-8513-95eebcce97c4-acme-intern'>"
+            "Apply now</a></body></html>")
+    respx.get(JOBTEASER_URL).mock(return_value=httpx.Response(200, text=html))
+    result = await _search(JobTeaserConnector(), _ctx())
+    assert len(result.jobs) == 1
+    assert result.jobs[0].is_snippet is True
+    assert result.jobs[0].title == "Data Science Internship"
+
+
+def test_jobteaser_is_registered():
+    assert "jobteaser" in connector_registry()
