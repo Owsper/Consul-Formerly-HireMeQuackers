@@ -52,10 +52,10 @@ The central rule is simple:
 | **Storage** | SQLite by default (`data/consul.db`); any SQLAlchemy URL is accepted |
 | **AI** | Google Gemini by default; any OpenAI-compatible provider, or a local Ollama |
 | **Offline** | Fully usable without an LLM: deterministic planning, scoring and CV generation |
-| **Sources** | 13 connectors: nine ATS platforms, two aggregators, web search, generic career pages |
+| **Sources** | 14 connectors: nine ATS platforms, three aggregators, web search, generic career pages |
 | **Documents** | ATS-safe DOCX, PDF and TXT generated from a fixed master template |
 | **Privacy** | Local data only, redacting logs, SSRF protection, export/backup/delete controls |
-| **Tests** | 144 tests, all HTTP mocked; suite runs in about 30–70 seconds |
+| **Tests** | 168 tests, all HTTP mocked; suite runs in about 30–70 seconds |
 
 ### Design principles
 
@@ -395,6 +395,7 @@ anti-bot protection.
 | TeamTailor | `teamtailor` | ATS | `TEAMTAILOR_SITES` | Public job index plus `JobPosting` JSON-LD; `Company:subdomain` or a full careers URL |
 | Adzuna | `adzuna` | Aggregator | `ADZUNA_APP_ID`, `ADZUNA_APP_KEY`, `ADZUNA_COUNTRY` | Free developer tier; aggregates many boards |
 | Jooble | `jooble` | Aggregator | `JOOBLE_API_KEY` | Free key on request; POST search API |
+| JobTeaser | `jobteaser` | Aggregator | None | Student/graduate board. Cloudflare blocks automated access, so it usually reports `restricted`; use the manual import form instead |
 | Web search discovery | `search_engine` | Search | `SEARCH_PROVIDER`, `SEARCH_API_KEY` | Brave, Serper or Tavily; results are snippets and stay marked unverified |
 | Company career pages | `company_careers` | Careers | Company registry entries | Fetches career pages directly and extracts `JobPosting` JSON-LD |
 
