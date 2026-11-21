@@ -13,7 +13,7 @@ from typing import Any
 
 from core.logging_config import get_logger
 from core.schemas import JobRecord, ListingStatus, WorkMode
-from core.text import normalize_text, normalize_whitespace
+from core.text import normalize_text, normalize_whitespace, strip_listing_boilerplate
 
 logger = get_logger("enrichment")
 
@@ -178,6 +178,14 @@ C_LANGUAGE_RE = re.compile(r"(?<![a-z0-9+#])c(?![a-z0-9+#])", re.I)
 
 def _alias_pattern(alias: str) -> re.Pattern:
     """Token-aware alias match, so "go" no longer fires inside "Google"."""
+    if alias.strip().lower() == "go":
+        # The Go language is written as a bare word, which collides with the
+        # English verb ("go to", "go back"). Those phrases are never a skill.
+        return re.compile(
+            r"(?<![a-z0-9])go(?![a-z0-9])(?!\s+(?:to|back|through|live|up|down|"
+            r"ahead|beyond|with|for|into|out|over|around|off|on|under|by)\b)",
+            re.I,
+        )
     return re.compile(rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])", re.I)
 
 
@@ -203,7 +211,7 @@ def detect_language(text: str) -> str:
 
 
 def _section_lines(description: str) -> tuple[list[str], list[str]]:
-    lines = [l.strip() for l in (description or "").splitlines()]
+    lines = [l.strip() for l in strip_listing_boilerplate(description).splitlines()]
     requirement_lines: list[str] = []
     responsibility_lines: list[str] = []
     current = None
@@ -376,7 +384,7 @@ def canonical_country(*values: str) -> str:
 
 def enrich_job(record: JobRecord, *, infer_country: bool = True) -> JobRecord:
     """Fill missing structured fields from the advert text, without inventing."""
-    description = record.description or ""
+    description = strip_listing_boilerplate(record.description or "")
     requirement_lines, responsibility_lines = _section_lines(description)
     requirement_text = "\n".join(requirement_lines)
     nice_start = NICE_TO_HAVE.search(requirement_text)
