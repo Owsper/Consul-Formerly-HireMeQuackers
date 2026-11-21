@@ -26,6 +26,7 @@ def _search_links(query: str, location: str) -> list[tuple[str, str]]:
         ("Google Jobs", f"https://www.google.com/search?q={q}+jobs+{loc}&ibp=htl;jobs"),
         ("StepStone", f"https://www.stepstone.de/jobs/{q}?where={loc}"),
         ("Welcome to the Jungle", f"https://www.welcometothejungle.com/en/jobs?query={q}"),
+        ("JobTeaser", f"https://www.jobteaser.com/en/job-offers?locale=en"),
     ]
     return links
 
