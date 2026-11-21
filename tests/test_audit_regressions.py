@@ -306,3 +306,60 @@ def test_in_country_no_sponsorship_advert_is_surfaced_as_a_concern():
     match = score_record(job, profile, [], SearchPreferences(countries=["Germany"],
                                                              employment_types=["internship"]))
     assert any("does not offer sponsorship" in c for c in match.eligibility.concerns)
+
+
+# --- Pasted job links must not import neighbouring postings ------------------
+
+RELATED_ROLES_PAGE = """<html><head><title>Backend Engineer - Acme</title></head><body>
+<nav><a href="/">Home</a></nav>
+<main>
+  <h1>Backend Engineer</h1>
+  <h2>Requirements</h2>
+  <ul><li>Python and SQL</li><li>Docker</li></ul>
+  <h2>Other open roles</h2>
+  <ul>
+    <li>Platform Engineer - Go, Kubernetes</li>
+    <li>Systems Engineer - Rust and C++</li>
+    <li>Web Developer - PHP, WordPress</li>
+  </ul>
+  <p>Go to our career portal to see more.</p>
+</main></body></html>"""
+
+
+def test_related_postings_do_not_become_required_skills():
+    from connectors.company_careers import parse_job_page
+    from core.schemas import JobRecord
+    from services.job_enrichment import enrich_job
+
+    fields = parse_job_page(RELATED_ROLES_PAGE, "https://example.invalid/jobs/backend")
+    assert "Other open roles" not in fields["description"]
+    job = enrich_job(JobRecord(source="manual", title=fields["title"],
+                               description=fields["description"]))
+    assert set(job.required_skills) == {"Python", "SQL", "Docker"}
+    for absent in ("Go", "Rust", "PHP", "C++", "WordPress", "Kubernetes"):
+        assert absent not in job.required_skills
+
+
+@pytest.mark.parametrize("text", ["Go to our career portal.", "Please go back.",
+                                  "Ready to go live soon?"])
+def test_english_verb_go_is_not_the_go_language(text):
+    from services.job_enrichment import extract_skills
+
+    assert "Go" not in extract_skills(text, text)[0]
+
+
+def test_the_go_language_is_still_detected():
+    from services.job_enrichment import extract_skills
+
+    required, _ = extract_skills("You will write services in Go and Rust.",
+                                 "Requirements\n- Go\n- Rust")
+    assert "Go" in required
+
+
+@pytest.mark.parametrize("marker", ["Weitere Stellen", "Ähnliche Stellen",
+                                    "Autres offres", "Otras ofertas"])
+def test_non_english_related_posting_blocks_are_trimmed(marker):
+    from core.text import strip_listing_boilerplate
+
+    text = f"Anforderungen\n- Python\n{marker}\n- Rust Entwickler"
+    assert "Rust" not in strip_listing_boilerplate(text)
