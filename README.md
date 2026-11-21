@@ -55,7 +55,7 @@ The central rule is simple:
 | **Sources** | 14 connectors: nine ATS platforms, three aggregators, web search, generic career pages |
 | **Documents** | ATS-safe DOCX, PDF and TXT generated from a fixed master template |
 | **Privacy** | Local data only, redacting logs, SSRF protection, export/backup/delete controls |
-| **Tests** | 168 tests, all HTTP mocked; suite runs in about 30–70 seconds |
+| **Tests** | 175 tests, all HTTP mocked; suite runs in about 30–70 seconds |
 
 ### Design principles
 
@@ -83,7 +83,7 @@ The central rule is simple:
 | **Search profiles** | Multiple reusable profiles with target and alternative titles, IT category, specialisation, required/preferred skills, technologies, seniority, industries, locations, work modes, employment types, languages, salary floor, posting age, work-authorisation constraints and planner notes. |
 | **Search planning** | LLM planning with a deterministic multilingual fallback; inspectable and editable query table; category catalogue; local-language titles; company registry. |
 | **Discovery** | Parallel scans across enabled sources, preference filtering, exact/fuzzy deduplication, structured enrichment, 100-point scoring, saved shortlist, manual import from a URL or by hand. |
-| **CV Studio** | Per-job, evidence-only tailoring; mandatory master template; DOCX/PDF/TXT export; in-app PDF preview; explicit approval gate; layout-fidelity report; optional second-pass LLM audit; descriptive filenames and versions. |
+| **CV Studio** | Per-job, evidence-only tailoring; mandatory master template; DOCX/PDF/TXT export; in-app page-by-page PDF preview; job-specific ATS score measured on the exported file; explicit approval gate; layout-fidelity report; optional second-pass LLM audit; descriptive filenames and versions. |
 | **Tracker** | Kanban board, table view, 14 default statuses plus custom ones, notes, contacts, follow-up and interview dates, salary notes, outcome notes, activity log and duplicate-application prevention. |
 | **Diagnostics** | Per-source health, configured/enabled state, request counts, errors, duration, scan history and one-click retry of failed sources. |
 | **Privacy controls** | SQLite backup, full JSON export, delete all career data, delete generated files, redacted logs. |
@@ -620,10 +620,18 @@ consul_CV_<Candidate>_<Company>_<JobTitle>_v<version>.docx
 
 ### Preview, approval and review
 
-Every version is previewed as a PDF inside CV Studio. Approval is per version and is blocked when
-validation or layout checks report errors. Download buttons exist only for an approved version.
-**Re-exporting revokes approval** so the new render must be reviewed again. The optional
-second-pass LLM audit asks the model to find unsupported claims in the generated CV.
+Every version is previewed inside CV Studio, page by page, directly in the app. The preview
+renders the exported PDF to page images with PyMuPDF (`ui/pdf_preview.py`) instead of embedding a
+`data:application/pdf;base64,…` frame: Chrome, Edge, Opera, Brave and Safari refuse to navigate a
+frame to a `data:` URL, which used to surface as "Opera can't open this file" instead of the
+document. Page images cannot be blocked by the viewer, a PDF plugin or a browser privacy setting,
+and they show exactly what was exported. If a version only has a DOCX, the HTML reading-order
+view is shown instead.
+
+Approval is per version and is blocked when validation or layout checks report errors. Download
+buttons exist only for an approved version. **Re-exporting revokes approval** so the new render
+must be reviewed again. The optional second-pass LLM audit asks the model to find unsupported
+claims in the generated CV.
 
 ### ATS readiness (2026 rules)
 
@@ -654,7 +662,39 @@ concise readiness panel:
 Coverage deliberately excludes terms without evidence: a CV is never penalised for
 not claiming a skill the candidate does not have. The panel also states plainly that
 **knockout questions live on the application form** and cannot be fixed by editing
-the CV. "What a parser roughly sees" shows the linear text layer behind the document.
+the CV.
+
+### ATS score for the exported file
+
+`services/ats_audit.py` scores the document that would actually be uploaded, against
+the target posting. It does not score the in-memory model, and it does not guess:
+
+1. it opens the exported PDF with PyMuPDF (DOCX with `python-docx` when no PDF exists),
+2. extracts the linear text an ATS would receive,
+3. re-parses name, email, phone and section headings **from that extracted text**,
+4. matches the posting's must-have/nice-to-have terms against it.
+
+Eight weighted criteria sum to 100:
+
+| Criterion | Weight | Measured on the file |
+| --- | --- | --- |
+| Text layer and extraction | 12 | characters present, share of the document's tokens recovered |
+| Contact fields | 10 | name, email and phone parsed out of the body text |
+| Section recognition | 12 | standard headings found in the parsed text |
+| Reading order | 8 | each dated entry keeps its title adjacent after extraction |
+| Job-specific keywords | 30 | evidenced must-have and nice-to-have terms present in the parsed text |
+| Title alignment | 8 | posting title terms present in the document |
+| Format safety | 12 | tables, text boxes, images, icon fonts, header/footer content |
+| Dates and recency | 8 | dates parse and experience runs newest-first |
+
+A missing text layer, missing contact fields, unrecognised sections or unsafe formatting
+are hard gates: the status becomes `blocked` and the score cannot be read as a pass.
+No file means no score — the panel says so instead of inventing one. The result is
+deterministic, stored with the version, and every point is traceable to a measurement
+shown in the UI, together with the verbatim extracted text. The panel is labelled
+`consul-ats-sim` and states that Workday, SAP SuccessFactors, Oracle Taleo, iCIMS,
+Greenhouse and Lever do not publish or expose their ranking engines, so this is a
+replica of their documented parsing behaviour rather than a vendor score.
 
 ### Layout verification
 
@@ -1102,6 +1142,8 @@ exercised here.
 | All sources `configuration_missing` | Seed variables or keys are empty | Fill them in `.env`, then **Reload .env** or **Seed boards from .env** |
 | A source is `restricted` | Site blocks automated access | Use Manual Search Assistance; CONSUL will not bypass it |
 | PDF preview uses the built-in renderer | LibreOffice not found | Install LibreOffice or set `CONSUL_SOFFICE` |
+| Preview shows page images, not a PDF viewer | Browsers block `data:` URLs in frames, so the viewer approach showed "cannot open this file" | Expected: pages are rendered with PyMuPDF. Download the PDF after approval for the file itself |
+| ATS score shows 0 / `blocked` | No readable file, or no text layer in the export | Generate the PDF again; a scan or flattened image can never be parsed |
 | PDF fonts look different | Liberation Serif substitutes Times New Roman | Expected; layout comparison allows metric tolerance |
 | Scanned PDF extracts nothing | OCR not installed | Install Tesseract and `pytesseract`, or enter facts manually |
 | "Database could not be opened" | Permissions or invalid `DATABASE_URL` | Check `DATA_DIR` and the SQLite path |
