@@ -187,12 +187,15 @@ def _extraction_payload(text: str) -> ProfileExtractionResponse:
     from services.llm_service import get_llm_service
 
     service = get_llm_service()
-    result = service.prompt_json("profile_extraction", ProfileExtractionResponse, cv_text=text[:60000])
+    result = service.prompt_json(
+        "profile_extraction", ProfileExtractionResponse,
+        cv_text=text[:60000], task="extraction",
+    )
     return result
 
 
 def structured_extraction(text: str, source_document: str) -> tuple[CandidateProfileData, list[EvidenceItem]]:
-    """Run Gemini extraction and normalise the evidence ledger.
+    """Run LLM extraction and normalise the evidence ledger.
 
     Raises ``LLMUnavailableError`` when no LLM is configured so the caller can
     offer manual entry instead of silently producing an empty profile.
