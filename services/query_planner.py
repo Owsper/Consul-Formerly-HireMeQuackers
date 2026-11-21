@@ -509,6 +509,7 @@ def plan_search(profile: CandidateProfileData, prefs: SearchPreferences, llm=Non
                  "specialisations": list(c.specialisations)}
                 for c in CATEGORIES.values()
             ],
+            task="planning",
         )
     except LLMUnavailableError as exc:
         return build_rule_based_plan(profile, prefs, reason=f"LLM unavailable: {exc}")
