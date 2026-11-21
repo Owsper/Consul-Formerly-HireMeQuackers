@@ -23,7 +23,8 @@ from connectors.base import (
 from core.logging_config import get_logger
 from core.schemas import JobRecord, ListingStatus
 from core.security import is_safe_url, sanitize_html
-from core.text import normalize_text, normalize_whitespace, similarity
+from core.text import (normalize_text, normalize_whitespace, similarity,
+                       strip_listing_boilerplate)
 
 logger = get_logger("careers")
 
@@ -199,6 +200,7 @@ def parse_job_page(html: str, page_url: str) -> dict[str, Any]:
     if node:
         fields = jsonld_to_fields(node, page_url)
         if fields.get("title"):
+            fields["description"] = strip_listing_boilerplate(fields.get("description", ""))
             return {**fields, "source": "jsonld"}
     og = parse_open_graph(html)
     soup = BeautifulSoup(html, "lxml")
@@ -207,9 +209,10 @@ def parse_job_page(html: str, page_url: str) -> dict[str, Any]:
     title = re.sub(r"\s*[|\-–]\s*[^|\-–]{1,40}$", "", normalize_whitespace(title)) or normalize_whitespace(title)
     company = og.get("og:site_name") or ""
     description = og.get("og:description") or ""
-    body = extract_main_text(html)
+    body = strip_listing_boilerplate(extract_main_text(html))
     if len(body) > len(description):
         description = body
+    description = strip_listing_boilerplate(description)
     return {
         "title": title,
         "company": company,
