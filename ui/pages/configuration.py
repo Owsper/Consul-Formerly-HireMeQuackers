@@ -259,6 +259,8 @@ def render() -> None:
                                 f"{item['description']}")
                 if st.button("Reload .env"):
                     reload_settings()
+                    from services.llm_service import reset_llm
+                    reset_llm()
                     st.success("Environment reloaded.")
                     st.rerun()
 
@@ -356,16 +358,15 @@ def render() -> None:
         st.markdown("##### LLM configuration")
         st.markdown(
             c.kv("LLM configured", "Yes" if settings.llm_available else "No")
-            + c.kv("Provider", settings.llm_provider)
-            + c.kv("Model", settings.active_model or "—")
-            + c.kv("API key source", "GEMINI_API_KEY" if settings.llm_provider == "gemini"
-                   else "LLM_API_KEY"),
+            + c.kv("Routing", "Automatic · Gemini for extraction/reasoning, Groq for drafting")
+            + c.kv("Gemini key", "Configured" if settings.provider_available("gemini") else "Not set")
+            + c.kv("Groq key", "Configured" if settings.provider_available("groq") else "Not set"),
             unsafe_allow_html=True,
         )
         if not settings.llm_available:
-            st.info("Set GEMINI_API_KEY (or choose LLM_PROVIDER and set LLM_API_KEY) in .env to "
-                    "enable LLM planning, extraction and CV drafting. Everything else works "
-                    "offline with deterministic fallbacks.")
+            st.info("Set GROQ_API_KEY and/or GEMINI_API_KEY in .env to enable LLM planning, "
+                    "extraction and CV drafting. The app selects the model and falls back "
+                    "automatically; everything else works offline with deterministic fallbacks.")
 
 
 def add_company_checked(name: str, url: str, country: str) -> str:
