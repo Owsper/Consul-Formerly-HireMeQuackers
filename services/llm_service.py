@@ -1,9 +1,11 @@
 """Central LLM service.
 
-All model calls go through this module. Providers are pluggable: Gemini speaks
-its native API, everything else uses the OpenAI ``/chat/completions`` shape, so
-one set of environment variables covers OpenAI, Groq, OpenRouter, DeepSeek,
-Mistral, Cerebras, Z.ai, a local Ollama, or any custom endpoint.
+All model calls go through this module. The app routes each kind of work to a
+primary model and an ordered fallback chain: Gemini handles extraction and
+high-stakes CV reasoning, Groq handles high-volume drafting and planning, and
+every provider uses the OpenAI ``/chat/completions`` shape. That also covers
+OpenAI, OpenRouter, DeepSeek, Mistral, Cerebras, Z.ai, a local Ollama, or any
+custom endpoint.
 
 Two rules keep this module predictable:
 
@@ -17,6 +19,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from string import Template
 from typing import Any, TypeVar
 
@@ -26,7 +29,7 @@ from tenacity import (
     Retrying, retry_if_exception_type, stop_after_attempt, wait_exponential_jitter,
 )
 
-from config import PROJECT_ROOT, get_settings
+from config import LLMRoute, PROJECT_ROOT, get_settings
 from core.exceptions import (
     LLMOverloadedError, LLMResponseError, LLMUnavailableError,
 )
@@ -38,13 +41,9 @@ PROMPTS_DIR = PROJECT_ROOT / "prompts"
 T = TypeVar("T", bound=BaseModel)
 
 # Rough public list prices (USD per 1M input/output tokens) for cost awareness only.
-COST_TABLE = {
-    "gemini-2.5-flash": (0.30, 2.50),
-    "gemini-2.5-flash-lite": (0.10, 0.40),
-    "gemini-2.5-pro": (1.25, 10.00),
-    "gemini-2.0-flash": (0.10, 0.40),
-    "gemini-1.5-flash": (0.075, 0.30),
-}
+# Provider pricing changes frequently; unknown models report zero instead of a
+# stale estimate.
+COST_TABLE: dict[str, tuple[float, float]] = {}
 
 # Retry policy for capacity errors. ``_RETRY_INITIAL_WAIT`` is module level so
 # tests can zero it out without waiting.
@@ -139,7 +138,7 @@ def classify_provider_error(exc: Exception, *, provider: str = "LLM") -> Excepti
     if "API_KEY_INVALID" in message or "API key not valid" in message:
         return LLMUnavailableError(
             f"{provider} rejected the API key. Check the key configured in .env "
-            "(GEMINI_API_KEY, or LLM_API_KEY for another provider).",
+            "(GROQ_API_KEY and/or GEMINI_API_KEY, or LLM_API_KEY for another provider).",
             details={"status": status, "provider": provider, "reason": "api_key_invalid"},
         )
     if status in (429, 500, 502, 503, 504) or _OVERLOAD_HINTS.search(message):
@@ -152,48 +151,11 @@ def classify_provider_error(exc: Exception, *, provider: str = "LLM") -> Excepti
                                details={"status": status, "provider": provider})
 
 
-def thinking_config_for(model: str):
-    """Return a thinking config appropriate for the model family.
-
-    Gemini 2.5 accepts ``thinking_budget`` and 0 disables thinking. Gemini 3.5+
-    rejects that field and requires ``thinking_level`` instead, so guessing
-    wrong here turns a slow call into a hard 400.
-    """
-    from google.genai import types
-
-    match = re.search(r"gemini-(\d+)(?:\.(\d+))?", (model or "").lower())
-    if not match:
-        return None
-    major, minor = int(match.group(1)), int(match.group(2) or 0)
-    if (major, minor) >= (3, 5):
-        return types.ThinkingConfig(thinking_level="MINIMAL")
-    if (major, minor) >= (2, 5):
-        return types.ThinkingConfig(thinking_budget=0)
-    return None
-
-
-def json_schema_for(schema: type[BaseModel] | None) -> dict | None:
-    if schema is None:
-        return None
-    try:
-        return schema.model_json_schema()
-    except Exception:  # pragma: no cover - defensive
-        return None
-
-
 def _format_rejected(text: str) -> bool:
     """Some free/limited models do not implement OpenAI JSON mode."""
     message = (text or "").lower()
     return any(term in message for term in
                ("response_format", "json mode", "structured output"))
-
-
-def _is_unsupported_option(exc: Exception) -> bool:
-    """A 400 that names one of our optional knobs means: retry without it."""
-    if _status_code(exc) not in (400, 422):
-        return False
-    message = str(exc).lower()
-    return any(term in message for term in ("thinking", "schema", "response_json"))
 
 
 def _estimate_cost(model: str, prompt_tokens: int, output_tokens: int) -> float:
@@ -218,100 +180,22 @@ class LLMProvider:
         raise NotImplementedError
 
 
-class GeminiProvider(LLMProvider):
-    name = "gemini"
-
-    def __init__(self, api_key: str, model: str, timeout: float = 45) -> None:
-        self.api_key = api_key
-        self.model = model
-        self.timeout = timeout
-        self._client = None
-
-    @property
-    def available(self) -> bool:
-        return bool(self.api_key)
-
-    def _get_client(self):
-        if self._client is None:
-            from google import genai  # imported lazily so the app runs without it
-            from google.genai import types
-
-            # The SDK defaults to no timeout at all, which lets one stalled
-            # request block the Streamlit script forever.
-            self._client = genai.Client(
-                api_key=self.api_key,
-                http_options=types.HttpOptions(timeout=int(self.timeout * 1000)),
-            )
-        return self._client
-
-    def generate(self, prompt: str, *, system: str | None = None,
-                 json_mode: bool = True, temperature: float | None = None,
-                 response_schema: type[BaseModel] | None = None) -> LLMResponse:
-        for attempt in _retrying():
-            with attempt:
-                return self._generate_once(prompt, system, json_mode, temperature,
-                                           response_schema)
-        raise LLMUnavailableError("Gemini request failed")  # pragma: no cover
-
-    def _generate_once(self, prompt: str, system: str | None, json_mode: bool,
-                       temperature: float | None,
-                       response_schema: type[BaseModel] | None) -> LLMResponse:
-        from google.genai import types
-
-        settings = get_settings()
-        config_kwargs: dict[str, Any] = {
-            "temperature": settings.llm_temperature if temperature is None else temperature,
-            "response_mime_type": "application/json" if json_mode else "text/plain",
-            "system_instruction": system,
-            "max_output_tokens": settings.llm_max_output_tokens,
-        }
-        thinking = thinking_config_for(self.model)
-        if thinking is not None:
-            config_kwargs["thinking_config"] = thinking
-        schema = json_schema_for(response_schema) if json_mode else None
-        if schema is not None:
-            config_kwargs["response_json_schema"] = schema
-
-        client = self._get_client()
-        response = None
-        for strip_optional in (False, True):
-            try:
-                response = client.models.generate_content(
-                    model=self.model, contents=prompt,
-                    config=types.GenerateContentConfig(**config_kwargs),
-                )
-                break
-            except Exception as exc:
-                if not strip_optional and _is_unsupported_option(exc):
-                    logger.info("Retrying without thinking/schema options: %s",
-                                str(exc)[:160])
-                    config_kwargs.pop("thinking_config", None)
-                    config_kwargs.pop("response_json_schema", None)
-                    continue
-                logger.warning("Gemini request failed: %s", str(exc)[:300])
-                raise classify_provider_error(exc, provider="Gemini") from exc
-
-        text = getattr(response, "text", None) or ""
-        usage = getattr(response, "usage_metadata", None)
-        prompt_tokens = int(getattr(usage, "prompt_token_count", 0) or 0)
-        output_tokens = int(getattr(usage, "candidates_token_count", 0) or 0)
-        cost = _estimate_cost(self.model, prompt_tokens, output_tokens)
-        logger.info("Gemini(%s) ok: %s prompt / %s output tokens, ~$%.4f",
-                    self.model, prompt_tokens, output_tokens, cost)
-        return LLMResponse(text=text, model=self.model, prompt_tokens=prompt_tokens,
-                           output_tokens=output_tokens, estimated_cost_usd=cost)
-
-
 class OpenAICompatibleProvider(LLMProvider):
     """Any endpoint implementing ``POST {base_url}/chat/completions``."""
 
     def __init__(self, api_key: str, base_url: str, model: str,
-                 timeout: float = 45, name: str = "openai_compatible") -> None:
+                 timeout: float = 45, name: str = "openai_compatible",
+                 max_output_tokens: int | None = None,
+                 reasoning_effort: str | None = None,
+                 max_prompt_chars: int = 0) -> None:
         self.api_key = api_key
         self.base_url = (base_url or "").rstrip("/")
         self.model = model
         self.timeout = timeout
         self.name = name
+        self.max_output_tokens = max_output_tokens
+        self.reasoning_effort = reasoning_effort
+        self.max_prompt_chars = max_prompt_chars
 
     @property
     def available(self) -> bool:
@@ -350,11 +234,18 @@ class OpenAICompatibleProvider(LLMProvider):
         }
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
-        if settings.llm_max_output_tokens:
-            payload["max_tokens"] = settings.llm_max_output_tokens
-        if settings.llm_reasoning_effort:
+        output_cap = (self.max_output_tokens if self.max_output_tokens is not None
+                      else settings.llm_max_output_tokens)
+        if output_cap:
+            payload["max_tokens"] = (
+                min(output_cap, settings.llm_max_output_tokens)
+                if settings.llm_max_output_tokens else output_cap
+            )
+        effort = (self.reasoning_effort if self.reasoning_effort is not None
+                  else settings.llm_reasoning_effort)
+        if effort:
             # Supported by Groq and OpenRouter; ignored by strict providers.
-            payload["reasoning_effort"] = settings.llm_reasoning_effort
+            payload["reasoning_effort"] = effort
 
         headers = {"Content-Type": "application/json"}
         if self.api_key:
@@ -444,78 +335,229 @@ class NullProvider(LLMProvider):
                  json_mode: bool = True, temperature: float | None = None,
                  response_schema: type[BaseModel] | None = None) -> LLMResponse:
         raise LLMUnavailableError(
-            "No LLM is configured. Add GEMINI_API_KEY (or LLM_PROVIDER + LLM_API_KEY) "
-            "in Settings or .env to enable AI features."
+            "No LLM is configured. Add GROQ_API_KEY and/or GEMINI_API_KEY "
+            "(or LLM_PROVIDER + LLM_API_KEY) in Settings or .env to enable AI features."
         )
 
 
 class LLMService:
-    def __init__(self, provider: LLMProvider | None = None) -> None:
-        self.provider = provider or _default_provider()
+    """Automatic, task-aware LLM routing with ordered provider fallback.
+
+    Callers name the *kind* of work (``extraction``, ``reasoning``,
+    ``writing``, ``planning`` or ``utility``); they never choose a provider or
+    model. Each route has a primary and fallbacks, so a free-tier rate limit,
+    an outage or a bad JSON response degrades to the next model instead of
+    breaking the user's workflow.
+
+    A short in-process cooldown prevents a provider that just returned 429 from
+    being hammered by the next request. Keys and limits are per provider, so
+    the Groq and Gemini quotas remain independent pools.
+    """
+
+    def __init__(self, provider: LLMProvider | None = None, *,
+                 routes: dict[str, list[LLMProvider]] | None = None,
+                 cooldown_seconds: int | None = None) -> None:
+        self._fixed_provider = provider
+        if provider is not None:
+            self.routes: dict[str, list[LLMProvider]] = {}
+        elif routes is not None:
+            self.routes = routes
+        else:
+            self.routes = _build_task_routes(get_settings())
+        self.provider = provider or self._primary_provider()
         self.last_usage: LLMResponse | None = None
+        self.last_provider: str | None = None
+        self._cooldown_until: dict[str, datetime] = {}
+        self._cooldown_seconds = (cooldown_seconds if cooldown_seconds is not None
+                                  else get_settings().llm_cooldown_seconds)
 
     @property
     def available(self) -> bool:
-        return bool(self.provider and self.provider.available)
+        if self._fixed_provider is not None:
+            return bool(self._fixed_provider.available)
+        return any(provider.available for providers in self.routes.values()
+                   for provider in providers)
+
+    @staticmethod
+    def _provider_key(provider: LLMProvider) -> str:
+        return f"{provider.name}:{provider.model}"
+
+    def _primary_provider(self) -> LLMProvider:
+        for task in ("extraction", "reasoning", "writing", "planning", "utility"):
+            for provider in self.routes.get(task, []):
+                if provider.available:
+                    return provider
+        return NullProvider()
+
+    @staticmethod
+    def _prompt_fits(provider: LLMProvider, prompt: str) -> bool:
+        limit = getattr(provider, "max_prompt_chars", 0)
+        return not limit or len(prompt) <= limit
+
+    def _providers_for(self, task: str) -> list[LLMProvider]:
+        if self._fixed_provider is not None:
+            if not self._fixed_provider.available:
+                raise LLMUnavailableError(
+                    "No LLM is configured. Add GROQ_API_KEY and/or GEMINI_API_KEY "
+                    "in Settings or .env to enable AI features."
+                )
+            return [self._fixed_provider]
+
+        providers = self.routes.get(task) or self.routes.get("utility") or []
+        now = datetime.now(timezone.utc)
+        active = [p for p in providers
+                  if p.available and self._cooldown_until.get(self._provider_key(p), now) <= now]
+        if active:
+            return active
+        if not self.available:
+            raise LLMUnavailableError(
+                "No LLM is configured. Add GROQ_API_KEY and/or GEMINI_API_KEY "
+                "in Settings or .env to enable AI features."
+            )
+        retry_at = min(self._cooldown_until.values(), default=now)
+        wait = max(1, int((retry_at - now).total_seconds()))
+        raise LLMOverloadedError(
+            f"All LLM providers for {task} are cooling down after rate limits. "
+            f"Try again in about {wait}s.",
+            details={"task": task, "retry_in_seconds": wait},
+        )
+
+    def _mark_failure(self, provider: LLMProvider, exc: Exception) -> None:
+        key = self._provider_key(provider)
+        if isinstance(exc, LLMOverloadedError):
+            seconds = max(1, self._cooldown_seconds)
+        elif isinstance(exc, LLMUnavailableError):
+            # A bad key or unsupported model needs operator action, not a retry
+            # every few minutes. Keep it out of the hot path for longer.
+            seconds = max(600, self._cooldown_seconds)
+        else:
+            return
+        self._cooldown_until[key] = datetime.now(timezone.utc) + timedelta(seconds=seconds)
+        logger.warning("LLM route %s cooling down for %ss: %s", key, seconds, exc)
+
+    def _record_success(self, provider: LLMProvider, response: LLMResponse) -> None:
+        self.last_usage = response
+        self.last_provider = provider.name
+        self._cooldown_until.pop(self._provider_key(provider), None)
 
     def generate_text(self, prompt: str, *, system: str | None = None,
-                      temperature: float | None = None) -> str:
-        if not self.available:
-            raise LLMUnavailableError(
-                "No LLM is configured. Add GEMINI_API_KEY (or LLM_PROVIDER + LLM_API_KEY) "
-                "in Settings or .env to enable AI features."
-            )
-        response = self.provider.generate(prompt, system=system, json_mode=False,
-                                          temperature=temperature)
-        self.last_usage = response
-        return response.text
+                      temperature: float | None = None,
+                      task: str = "utility") -> str:
+        last_error: Exception | None = None
+        for provider in self._providers_for(task):
+            if not self._prompt_fits(provider, prompt):
+                logger.info("Skipping %s for %s: prompt is %s chars, limit is %s",
+                            self._provider_key(provider), task, len(prompt),
+                            getattr(provider, "max_prompt_chars", 0))
+                last_error = LLMUnavailableError(
+                    f"The prompt is too large for {self._provider_key(provider)}'s free "
+                    "per-minute budget."
+                )
+                continue
+            try:
+                response = provider.generate(prompt, system=system, json_mode=False,
+                                             temperature=temperature)
+                self._record_success(provider, response)
+                return response.text
+            except (LLMOverloadedError, LLMUnavailableError) as exc:
+                self._mark_failure(provider, exc)
+                last_error = exc
+                logger.info("LLM %s failed for %s; trying next route: %s",
+                            self._provider_key(provider), task, exc)
+            except LLMResponseError as exc:
+                last_error = exc
+                logger.info("LLM %s returned an unusable response for %s; trying next route: %s",
+                            self._provider_key(provider), task, exc)
+        if last_error:
+            raise last_error
+        raise LLMUnavailableError("No LLM provider produced a response.")
 
-    def generate_json(self, prompt: str, schema: type[T], *, system: str | None = None,
-                      attempts: int | None = None, temperature: float | None = None) -> T:
-        """Generate and validate structured output, retrying only on bad JSON.
-
-        Capacity errors are not retried here: the provider already backs off,
-        and repeating the whole prompt would only burn more quota.
-        """
-        if not self.available:
-            raise LLMUnavailableError(
-                "No LLM is configured. Add GEMINI_API_KEY (or LLM_PROVIDER + LLM_API_KEY) "
-                "in Settings or .env to enable AI features."
-            )
+    def _generate_json_with_provider(self, provider: LLMProvider, prompt: str,
+                                     schema: type[T], *, system: str | None,
+                                     attempts: int | None,
+                                     temperature: float | None) -> T:
+        """Schema retries stay on one provider; route fallback is the caller's job."""
         tries = attempts or max(1, get_settings().llm_max_retries + 1)
         last_error: Exception | None = None
         current_prompt = prompt
         for attempt in range(1, tries + 1):
-            response = self.provider.generate(current_prompt, system=system, json_mode=True,
-                                              temperature=temperature,
-                                              response_schema=schema)
-            self.last_usage = response
+            response = provider.generate(current_prompt, system=system, json_mode=True,
+                                         temperature=temperature,
+                                         response_schema=schema)
+            self._record_success(provider, response)
             try:
                 payload = extract_json_block(response.text)
                 return schema.model_validate(payload)
             except (LLMResponseError, ValidationError) as exc:
                 last_error = exc
-                logger.warning("LLM JSON attempt %s/%s failed: %s", attempt, tries, exc)
+                logger.warning("LLM %s JSON attempt %s/%s failed: %s",
+                               self._provider_key(provider), attempt, tries, exc)
                 current_prompt = (
                     prompt
                     + "\n\nYour previous answer was rejected because it did not match the required "
                     f"JSON schema ({str(exc)[:400]}). Return ONLY valid JSON that exactly matches "
                     "the schema, with no commentary and no markdown fences."
                 )
-        raise LLMResponseError(f"Model did not return valid structured JSON: {last_error}")
+        raise LLMResponseError(
+            f"{self._provider_key(provider)} did not return valid structured JSON: {last_error}")
+
+    def generate_json(self, prompt: str, schema: type[T], *, system: str | None = None,
+                      attempts: int | None = None, temperature: float | None = None,
+                      task: str = "utility") -> T:
+        """Generate validated structured output across the task's route.
+
+        Capacity errors are not retried here: the provider already backs off,
+        and repeating the whole prompt would only burn more quota. Bad JSON is
+        retried on the same provider, then the next provider gets a fresh try.
+        """
+        last_error: Exception | None = None
+        for provider in self._providers_for(task):
+            if not self._prompt_fits(provider, prompt):
+                logger.info("Skipping %s for %s: prompt is %s chars, limit is %s",
+                            self._provider_key(provider), task, len(prompt),
+                            getattr(provider, "max_prompt_chars", 0))
+                last_error = LLMUnavailableError(
+                    f"The prompt is too large for {self._provider_key(provider)}'s free "
+                    "per-minute budget."
+                )
+                continue
+            try:
+                return self._generate_json_with_provider(
+                    provider, prompt, schema, system=system, attempts=attempts,
+                    temperature=temperature)
+            except (LLMOverloadedError, LLMUnavailableError) as exc:
+                self._mark_failure(provider, exc)
+                last_error = exc
+                logger.info("LLM %s failed for %s; trying next route: %s",
+                            self._provider_key(provider), task, exc)
+            except LLMResponseError as exc:
+                last_error = exc
+                logger.info("LLM %s failed structured output for %s; trying next route: %s",
+                            self._provider_key(provider), task, exc)
+        if last_error:
+            raise last_error
+        raise LLMUnavailableError("No LLM provider produced a response.")
 
     def prompt_json(self, prompt_name: str, schema: type[T], *, attempts: int | None = None,
-                    **context: Any) -> T:
-        return self.generate_json(render_prompt(prompt_name, **context), schema, attempts=attempts)
+                    task: str = "utility", **context: Any) -> T:
+        return self.generate_json(render_prompt(prompt_name, **context), schema,
+                                  attempts=attempts, task=task)
 
-    def prompt_text(self, prompt_name: str, **context: Any) -> str:
-        return self.generate_text(render_prompt(prompt_name, **context))
+    def prompt_text(self, prompt_name: str, *, task: str = "utility",
+                    **context: Any) -> str:
+        return self.generate_text(render_prompt(prompt_name, **context), task=task)
 
     def describe(self) -> dict:
+        routes = {
+            task: [{"provider": p.name, "model": p.model} for p in providers]
+            for task, providers in self.routes.items()
+        }
         return {
             "provider": self.provider.name if self.provider else "none",
             "model": getattr(self.provider, "model", ""),
             "available": self.available,
+            "last_provider": self.last_provider,
+            "routes": routes,
             "last_usage": (
                 {
                     "prompt_tokens": self.last_usage.prompt_tokens,
@@ -527,16 +569,47 @@ class LLMService:
         }
 
 
+def _provider_from_route(route: LLMRoute, settings: Any) -> OpenAICompatibleProvider:
+    return OpenAICompatibleProvider(
+        settings.api_key_for(route.provider),
+        settings.endpoint_for(route.provider),
+        route.model,
+        timeout=settings.llm_timeout_seconds,
+        name=route.provider,
+        max_output_tokens=route.max_output_tokens,
+        reasoning_effort=route.reasoning_effort,
+        max_prompt_chars=route.max_prompt_chars,
+    )
+
+
+def _build_task_routes(settings: Any) -> dict[str, list[LLMProvider]]:
+    routes: dict[str, list[LLMProvider]] = {}
+    for task, specs in settings.llm_routes.items():
+        routes[task] = [provider for provider in
+                        (_provider_from_route(route, settings) for route in specs)
+                        if provider.available]
+
+    # A custom/legacy provider (OpenRouter, OpenAI, Ollama, ...) remains the
+    # final fallback so existing single-provider installations keep working.
+    legacy = _default_provider()
+    if legacy.available:
+        for providers in routes.values():
+            if not any(p.name == legacy.name and p.model == legacy.model for p in providers):
+                providers.append(legacy)
+    return routes
+
+
 def _default_provider() -> LLMProvider:
     settings = get_settings()
-    if not settings.llm_available:
+    provider = settings.llm_provider
+    if not settings.provider_available(provider):
         return NullProvider()
-    if settings.llm_provider == "gemini":
-        return GeminiProvider(settings.gemini_api_key, settings.active_model,
-                              timeout=settings.llm_timeout_seconds)
     return OpenAICompatibleProvider(
-        settings.llm_api_key, settings.llm_endpoint, settings.active_model,
-        timeout=settings.llm_timeout_seconds, name=settings.llm_provider,
+        settings.api_key_for(provider), settings.endpoint_for(provider),
+        settings.active_model, timeout=settings.llm_timeout_seconds, name=provider,
+        max_output_tokens=(4096 if provider == "groq" else settings.llm_max_output_tokens),
+        reasoning_effort=settings.llm_reasoning_effort,
+        max_prompt_chars=(16000 if provider == "groq" else 0),
     )
 
 
@@ -551,7 +624,7 @@ def get_llm_service() -> LLMService:
 
 
 def configure_llm(provider: LLMProvider | None) -> LLMService:
-    """Inject a provider (tests, or a future alternative provider)."""
+    """Inject a provider (tests) or rebuild the automatic routing table."""
     global _service
     _service = LLMService(provider)
     return _service
