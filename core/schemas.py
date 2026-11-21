@@ -579,6 +579,88 @@ class ValidationReport(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Cover letters and recruiter emails
+# ---------------------------------------------------------------------------
+class DocumentParagraph(BaseModel):
+    """One body paragraph. Factual prose must cite ledger evidence ids."""
+
+    text: str = ""
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
+class CoverLetterDraft(BaseModel):
+    greeting: str = ""
+    paragraphs: list[DocumentParagraph] = Field(default_factory=list)
+    closing: str = ""
+    signature: str = ""
+    contact_lines: list[str] = Field(default_factory=list)
+    recipient_name: str = ""
+    recipient_title: str = ""
+    target_job_title: str = ""
+    target_company: str = ""
+    language: str = "en"
+    generator: str = "rule_based"
+    generated_at: datetime = Field(default_factory=utcnow)
+
+    def evidence_ids(self) -> list[str]:
+        return list(dict.fromkeys(i for p in self.paragraphs for i in p.evidence_ids))
+
+    def word_count(self) -> int:
+        body = " ".join([self.greeting, *[p.text for p in self.paragraphs], self.closing])
+        return len(body.split())
+
+    def to_text(self) -> str:
+        parts = [self.greeting, ""]
+        for paragraph in self.paragraphs:
+            parts.extend([paragraph.text, ""])
+        parts.append(self.closing)
+        parts.extend(["", self.signature])
+        parts.extend(self.contact_lines)
+        return "\n".join(part for part in parts if part is not None).strip() + "\n"
+
+
+class EmailDraft(BaseModel):
+    subject: str = ""
+    greeting: str = ""
+    paragraphs: list[DocumentParagraph] = Field(default_factory=list)
+    closing: str = ""
+    signature: str = ""
+    contact_lines: list[str] = Field(default_factory=list)
+    recipient_name: str = ""
+    recipient_title: str = ""
+    target_job_title: str = ""
+    target_company: str = ""
+    language: str = "en"
+    generator: str = "rule_based"
+    generated_at: datetime = Field(default_factory=utcnow)
+
+    def evidence_ids(self) -> list[str]:
+        return list(dict.fromkeys(i for p in self.paragraphs for i in p.evidence_ids))
+
+    def word_count(self) -> int:
+        body = " ".join([self.greeting, *[p.text for p in self.paragraphs], self.closing])
+        return len(body.split())
+
+    def to_text(self) -> str:
+        parts = [f"Subject: {self.subject}" if self.subject else "", self.greeting, ""]
+        for paragraph in self.paragraphs:
+            parts.extend([paragraph.text, ""])
+        parts.append(self.closing)
+        parts.extend(["", self.signature])
+        parts.extend(self.contact_lines)
+        return "\n".join(part for part in parts if part is not None).strip() + "\n"
+
+
+class LetterValidation(BaseModel):
+    passed: bool = True
+    issues: list[ValidationIssue] = Field(default_factory=list)
+    unsupported_claims: list[str] = Field(default_factory=list)
+    evidence_coverage: float = 0.0
+    word_count: int = 0
+    checked_at: datetime = Field(default_factory=utcnow)
+
+
+# ---------------------------------------------------------------------------
 # Scan diagnostics
 # ---------------------------------------------------------------------------
 class SourceReportData(BaseModel):
