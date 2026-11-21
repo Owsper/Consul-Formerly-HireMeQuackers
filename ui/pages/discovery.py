@@ -413,7 +413,12 @@ def _render_manual_import() -> None:
                 try:
                     record = asyncio.run(_fetch())
                 except Exception as exc:
-                    st.error(f"Could not fetch that page: {type(exc).__name__}: {exc}")
+                    message = f"Could not fetch that page: {type(exc).__name__}: {exc}"
+                    if "403" in str(exc) or "401" in str(exc):
+                        message += ('\n\nThis site blocks automated access (login or bot protection). '
+                                    'Open the posting in your browser and use the "Enter details" '
+                                    'tab instead; the app does not bypass site protections.')
+                    st.error(message)
                     return
                 if not record.title:
                     st.error("No job title was found on that page; enter the details manually instead.")
