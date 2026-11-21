@@ -88,6 +88,10 @@ def test_cv_studio_renders_preview_and_approval(session, approved_profile, profi
     text = " ".join(m.value for m in at.markdown)
     assert "Document preview" in text
     assert "Template fidelity" in text
+    # The preview must be rendered pages, not a data: URL the browser refuses to open.
+    assert at.image, "the PDF preview must render as page images"
+    assert "ATS score for this posting" in text
+    assert any("ATS score" in x.value for x in at.markdown)
     assert "Approve this CV" in " ".join(b.label for b in at.button)
     assert not at.download_button, "downloads must stay locked before approval"
 
