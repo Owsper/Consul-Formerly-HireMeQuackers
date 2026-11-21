@@ -3,27 +3,26 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 from pathlib import Path
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 from config import get_settings
 from core.database import session_scope
 from core.exceptions import consulError
 from core.models import Job
 from services.cv_service import (
-    approve_cv, generate_cv_for_job, get_version, is_cv_approved, list_versions, load_cv,
-    reexport, revoke_cv_approval,
+    approve_cv, ensure_document_audit, generate_cv_for_job, get_version, is_cv_approved,
+    list_versions, load_cv, reexport, revoke_cv_approval,
 )
 from services.cv_tailoring import audit_cv_with_llm
-from services.document_export import cv_to_text, pdf_render_source
+from services.document_export import pdf_render_source
 from services.job_service import get_match, list_jobs
 from services.master_template import MASTER_FILENAME
 from services.profile_service import get_active_profile
 from ui import components as c
 from ui.nav import go
+from ui.pdf_preview import show_pdf_preview
 
 LANGUAGES = {"en": "English", "de": "Deutsch", "fr": "Français", "es": "Español", "nl": "Nederlands"}
 
@@ -181,26 +180,32 @@ def _render_versions(job_id: str) -> None:
 
     st.markdown("##### Document preview")
     pdf_path = Path(paths["pdf"]) if paths["pdf"] else None
+    previewed = False
     if pdf_path and pdf_path.exists():
-        encoded = base64.b64encode(pdf_path.read_bytes()).decode("ascii")
-        components.html(
-            f'<iframe src="data:application/pdf;base64,{encoded}" '
-            'width="100%" height="900" style="border:1px solid #d8d8d8;"></iframe>',
-            height=910, scrolling=True,
-        )
         source = pdf_render_source(pdf_path)
-        st.caption(
-            "Rendered from the DOCX with LibreOffice." if source == "docx_conversion"
-            else "Rendered with the built-in measured renderer (LibreOffice is not installed); "
-                 "geometry matches the master template."
+        previewed = show_pdf_preview(
+            pdf_path,
+            caption=(
+                "Rendered from the DOCX with LibreOffice. This is the file you download."
+                if source == "docx_conversion"
+                else "Rendered with the built-in measured renderer (LibreOffice is not "
+                     "installed); geometry matches the master template."
+            ),
         )
-    else:
-        st.info("No PDF preview is available for this version. The editable DOCX is still intact.")
+    if not previewed:
+        st.info("The PDF pages could not be rendered for preview. The editable DOCX is intact, "
+                "and the document below is the same content in reading order.")
         st.markdown(c.render_cv_html(cv), unsafe_allow_html=True)
+
+    with session_scope() as session:
+        version_row = get_version(session, chosen)
+        audit = ensure_document_audit(session, version_row) if version_row is not None else {}
+    if audit:
+        _render_ats_audit(audit)
 
     ats = validation.ats_report or {}
     if ats:
-        st.markdown("##### ATS readiness")
+        st.markdown("##### Parse risk detail")
         risk = str(ats.get("parse_risk") or "unknown")
         risk_tone = {"low": "success", "medium": "warn", "high": "danger"}.get(risk, "neutral")
         must = (ats.get("keyword_coverage") or {}).get("must_have") or {}
@@ -235,10 +240,7 @@ def _render_versions(job_id: str) -> None:
                        "deterministic checks, no model judgement")
         if ats.get("knockout_note"):
             st.info(ats["knockout_note"])
-        with st.expander("What a parser roughly sees"):
-            st.caption("The linear text layer underneath this document. "
-                       "Formatting artefacts are excluded; real content is not.")
-            st.code(cv_to_text(cv), language="text")
+
 
     layout = validation.layout or {}
     st.markdown("##### Template fidelity")
@@ -345,6 +347,85 @@ def _render_versions(job_id: str) -> None:
             st.markdown(f"- {c.esc(bullet.text)} " +
                         " ".join(c.badge(i, "neutral") for i in bullet.evidence_ids),
                         unsafe_allow_html=True)
+
+
+def _render_ats_audit(audit: dict) -> None:
+    """Score measured on the exported file, with every point traceable."""
+    score = int(audit.get("score") or 0)
+    status = str(audit.get("status") or "attention")
+    tone = {"pass": "success", "attention": "warn", "blocked": "danger"}.get(status, "neutral")
+    verdict = {
+        "pass": "All hard gates pass",
+        "attention": "Fixable gaps",
+        "blocked": "Hard gate failed",
+    }.get(status, status.title())
+
+    st.markdown("##### ATS score for this posting")
+    st.markdown(
+        c.badge(f"{score}/100", tone)
+        + " " + c.badge(verdict, tone)
+        + " " + c.badge(f"Engine {audit.get('engine', 'consul-ats-sim')} "
+                        f"{audit.get('version', '')}".strip(), "neutral"),
+        unsafe_allow_html=True,
+    )
+    st.progress(min(1.0, max(0.0, score / 100)))
+    if audit.get("blockers"):
+        st.error("A real ATS could struggle to read this document: "
+                 + ", ".join(audit["blockers"]) + ".")
+
+    rows = [
+        {
+            "Criterion": item.get("label", ""),
+            "Score": f"{item.get('points', 0):g}/{item.get('weight', 0)}",
+            "Result": {"pass": "Pass", "partial": "Partial", "fail": "Fail"}.get(
+                item.get("status", ""), item.get("status", "")),
+            "Measured": item.get("detail", ""),
+        }
+        for item in audit.get("criteria") or []
+    ]
+    if rows:
+        st.dataframe(rows, hide_index=True, use_container_width=True)
+
+    if audit.get("fixes"):
+        st.markdown("**What would raise the score**")
+        for fix in audit["fixes"]:
+            st.write(f"- {fix}")
+
+    parsed = audit.get("parsed") or {}
+    coverage = audit.get("keyword_coverage") or {}
+    must = coverage.get("must_have") or {}
+    with st.expander("What was measured, and on which file"):
+        st.caption(
+            f"Read from the {parsed.get('source', 'exported').upper()} "
+            f"({parsed.get('pages', 0)} page(s), {parsed.get('characters', 0)} characters, "
+            f"{parsed.get('file_kb', 0)} KB). Tokens recovered from the document model: "
+            f"{float(parsed.get('recovery') or 0):.0%}. Tables: {parsed.get('tables', 0)}. "
+            f"Text boxes: {parsed.get('text_boxes', 0)}. Images: {parsed.get('images', 0)}."
+        )
+        if parsed.get("fonts"):
+            st.caption("Fonts a parser sees: " + ", ".join(parsed["fonts"]))
+        if must.get("covered"):
+            st.write("**Posting terms present in the parsed text:** "
+                     + ", ".join(must["covered"][:14]))
+        if must.get("missing_evidenced"):
+            st.write("**Evidenced but absent from this document:** "
+                     + ", ".join(must["missing_evidenced"][:14]))
+        if must.get("unevidenced"):
+            st.caption("Not evidenced, so never claimed: "
+                       + ", ".join(must["unevidenced"][:14]))
+        st.caption(audit.get("disclaimer", ""))
+        st.caption(
+            "Weights: text layer and extraction 12, contact fields 10, section recognition 12, "
+            "reading order 8, job-specific keywords 30, title alignment 8, format safety 12, "
+            "dates and recency 8."
+        )
+        for note in audit.get("notes") or []:
+            st.caption(note)
+
+    with st.expander("What the parser actually extracted"):
+        st.caption("Verbatim text layer of the exported file. If something is missing here, "
+                   "it is missing for the employer's system too.")
+        st.code(audit.get("extracted_text") or "", language="text")
 
 
 def _record_for(session, job_id: str):
