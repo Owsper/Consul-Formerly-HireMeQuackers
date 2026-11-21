@@ -307,6 +307,17 @@ def _coverage(cv_text: str, terms: tuple[str, ...], evidence_text: str) -> dict[
     }
 
 
+def evidence_claim_text(evidence: list[EvidenceItem]) -> str:
+    """Public entry point for the evidence a CV is allowed to claim."""
+    return _evidence_text(evidence)
+
+
+def coverage_of(cv_text: str, terms: tuple[str, ...],
+                evidence_text: str) -> dict[str, Any]:
+    """Public entry point for token-aware coverage of a term set."""
+    return _coverage(cv_text, terms, evidence_text)
+
+
 def _evidence_text(evidence: list[EvidenceItem]) -> str:
     """Evidence the candidate can actually claim.
 
