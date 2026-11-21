@@ -326,6 +326,12 @@ notes field, and actions to remove it, add it to the tracker as `Shortlisted`, o
   validation or layout checks report errors.
 - Revoke approval, re-export files (which requires re-approval), or run a second-pass LLM audit.
 - Browse all versions for the job.
+- **Cover letter** and **Recruiter email** tabs draft communication for the same job from the
+  same evidence ledger. Every factual paragraph cites evidence ids; greeting, subject, sign-off
+  and contact details are built from the profile and the optional recipient, never guessed. An
+  LLM draft is sanitised and validated, then replaced by the deterministic evidence-only draft
+  when it cannot be cited. Cover letters download as TXT or a plain business-letter DOCX and can
+  be saved to the tracker; emails download as TXT with their subject line.
 
 ### 7. Application Tracker (`ui/pages/tracker.py`)
 
