@@ -461,6 +461,7 @@ async def llm_extract_requirements(record: JobRecord) -> JobRecord:
             "job_analysis",
             Extraction,
             job_json=record.model_dump_json(indent=2)[:20000],
+            task="extraction",
         )
         record = record.model_copy(update={
             "required_skills": result.required_skills or record.required_skills,
