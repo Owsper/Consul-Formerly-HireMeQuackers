@@ -149,7 +149,7 @@ def _render_cv_tab(job: dict) -> None:
             if job["language"] in LANGUAGES else 0,
             format_func=lambda code: LANGUAGES[code], key="cv_language",
         )
-        use_llm = st.checkbox("Use Gemini drafting", value=settings.llm_available,
+        use_llm = st.checkbox("Use AI drafting", value=settings.llm_available,
                               disabled=not settings.llm_available, key="cv_use_llm",
                               help="Without an LLM, the deterministic evidence-only builder is used.")
         formats = st.multiselect("Export formats", ["docx", "pdf", "txt"], default=["docx", "pdf"],
@@ -405,7 +405,7 @@ def _render_cover_letter_tab(job: dict) -> None:
         placeholder="e.g. Talent Acquisition Manager",
     )
     use_llm = st.checkbox(
-        "Use Gemini drafting", value=settings.llm_available,
+        "Use AI drafting", value=settings.llm_available,
         disabled=not settings.llm_available, key="cl_use_llm",
         help="Without an LLM, the deterministic evidence-only letter is used.",
     )
@@ -494,7 +494,7 @@ def _render_email_tab(job: dict) -> None:
         placeholder="e.g. Talent Acquisition Manager",
     )
     use_llm = st.checkbox(
-        "Use Gemini drafting", value=settings.llm_available,
+        "Use AI drafting", value=settings.llm_available,
         disabled=not settings.llm_available, key="em_use_llm",
         help="Without an LLM, the deterministic evidence-only email is used.",
     )
