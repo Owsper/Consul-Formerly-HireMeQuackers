@@ -1,4 +1,4 @@
-"""Provider selection, retry policy and the OpenAI-compatible client."""
+"""Task routing, fallback policy and the OpenAI-compatible client."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ import json
 import httpx
 import pytest
 import respx
-from google.genai import types
 from pydantic import BaseModel
 
 import config
@@ -38,13 +37,34 @@ class _BusyProvider(llm.LLMProvider):
         raise LLMOverloadedError("busy")
 
 
-def test_thinking_config_matches_the_model_family():
-    # Gemini 3.5+ rejects thinking_budget and requires thinking_level.
-    assert llm.thinking_config_for("gemini-3.8-flash") == types.ThinkingConfig(
-        thinking_level=types.ThinkingLevel.MINIMAL)
-    assert llm.thinking_config_for("gemini-2.5-flash") == types.ThinkingConfig(
-        thinking_budget=0)
-    assert llm.thinking_config_for("gemini-2.0-flash") is None
+class _OkProvider(llm.LLMProvider):
+    name = "ok"
+    model = "test"
+
+    def __init__(self, text: str = "ok") -> None:
+        self.text = text
+        self.calls = 0
+
+    @property
+    def available(self) -> bool:
+        return True
+
+    def generate(self, prompt, *, system=None, json_mode=True,
+                 temperature=None, response_schema=None):
+        self.calls += 1
+        return llm.LLMResponse(text=self.text, model=self.model)
+
+
+class _BadJsonProvider(_OkProvider):
+    name = "bad-json"
+
+    def __init__(self) -> None:
+        super().__init__("this is not JSON")
+
+
+class _SmallPromptProvider(_OkProvider):
+    name = "small-prompt"
+    max_prompt_chars = 5
 
 
 def test_capacity_errors_are_classified_separately():
@@ -92,20 +112,126 @@ def test_default_provider_uses_preset_model(monkeypatch):
     assert provider.timeout == 17
 
 
-def test_gemini_provider_gets_the_configured_timeout(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
-    monkeypatch.setenv("LLM_TIMEOUT_SECONDS", "17")
+def test_groq_api_key_is_accepted_without_llm_api_key(monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
     config.get_settings.cache_clear()
     provider = llm._default_provider()
-    assert isinstance(provider, llm.GeminiProvider)
-    assert provider.timeout == 17
+    assert isinstance(provider, llm.OpenAICompatibleProvider)
+    assert provider.base_url == "https://api.groq.com/openai/v1"
+    assert provider.available
 
 
 def test_no_provider_when_llm_is_disabled(monkeypatch):
     monkeypatch.setenv("LLM_ENABLED", "0")
-    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
     config.get_settings.cache_clear()
     assert not llm._default_provider().available
+
+
+def test_default_routes_put_gemini_on_extraction_and_groq_on_writing(monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "groq-key")
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-key")
+    config.get_settings.cache_clear()
+
+    service = llm.LLMService()
+
+    extraction = service.routes["extraction"]
+    assert [(p.name, p.model) for p in extraction[:2]] == [
+        ("gemini", "gemini-3.8-flash"),
+        ("gemini", "gemini-3.5-flash-lite"),
+    ]
+    assert extraction[-1].name == "groq"
+    assert service.routes["writing"][0].name == "groq"
+    assert service.routes["writing"][0].model == "openai/gpt-oss-120b"
+    assert service.routes["reasoning"][0].name == "gemini"
+
+
+def test_route_falls_back_to_the_next_provider_on_capacity_error():
+    busy = _BusyProvider()
+    ok = _OkProvider()
+    service = llm.LLMService(routes={"writing": [busy, ok]}, cooldown_seconds=60)
+
+    assert service.generate_text("write", task="writing") == "ok"
+    assert busy.calls == 1
+    assert ok.calls == 1
+
+
+def test_rate_limited_provider_is_skipped_by_the_next_request():
+    busy = _BusyProvider()
+    ok = _OkProvider()
+    service = llm.LLMService(routes={"writing": [busy, ok]}, cooldown_seconds=60)
+
+    service.generate_text("first", task="writing")
+    service.generate_text("second", task="writing")
+
+    assert busy.calls == 1
+    assert ok.calls == 2
+
+
+def test_all_providers_cooling_down_raises_a_clear_overload_error():
+    busy = _BusyProvider()
+    service = llm.LLMService(routes={"writing": [busy]}, cooldown_seconds=60)
+
+    with pytest.raises(LLMOverloadedError):
+        service.generate_text("first", task="writing")
+    with pytest.raises(LLMOverloadedError) as excinfo:
+        service.generate_text("second", task="writing")
+
+    assert "cooling down" in str(excinfo.value)
+    assert busy.calls == 1
+
+
+def test_provider_with_a_small_prompt_budget_is_skipped_for_long_inputs():
+    small = _SmallPromptProvider()
+    ok = _OkProvider()
+    service = llm.LLMService(routes={"writing": [small, ok]}, cooldown_seconds=60)
+
+    assert service.generate_text("a prompt that is too long", task="writing") == "ok"
+    assert small.calls == 0
+    assert ok.calls == 1
+
+
+def test_bad_json_falls_back_to_the_next_provider():
+    bad = _BadJsonProvider()
+    good = _OkProvider('{"ok": true}')
+    service = llm.LLMService(routes={"extraction": [bad, good]}, cooldown_seconds=60)
+
+    result = service.generate_json("extract", Payload, attempts=1, task="extraction")
+
+    assert result.ok is True
+    assert bad.calls == 1
+    assert good.calls == 1
+
+
+def test_gemini_uses_its_openai_compatible_endpoint(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    config.get_settings.cache_clear()
+
+    provider = llm._default_provider()
+
+    assert isinstance(provider, llm.OpenAICompatibleProvider)
+    assert provider.base_url == "https://generativelanguage.googleapis.com/v1beta/openai"
+    assert provider.model == "gemini-3.8-flash"
+
+
+@respx.mock
+def test_gemini_route_uses_the_openai_compatible_chat_endpoint(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-key")
+    config.get_settings.cache_clear()
+    route = respx.post(
+        "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+    ).mock(return_value=httpx.Response(200, json={
+        "choices": [{"message": {"content": "extracted"}}],
+        "usage": {"prompt_tokens": 12, "completion_tokens": 3},
+    }))
+
+    service = llm.LLMService()
+    assert service.generate_text("extract this", task="extraction") == "extracted"
+
+    body = json.loads(route.calls.last.request.content)
+    assert body["model"] == "gemini-3.8-flash"
+    assert route.calls.last.request.headers["Authorization"] == "Bearer gemini-key"
 
 
 @respx.mock
