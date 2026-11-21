@@ -13,10 +13,11 @@ draws the same geometry directly, so the exported PDF still matches the referenc
 from __future__ import annotations
 
 import tempfile
+from datetime import date
 from pathlib import Path
 
 from core.logging_config import get_logger
-from core.schemas import CVEntry, CVRow, CVSection, TailoredCV
+from core.schemas import CVEntry, CVRow, CVSection, CoverLetterDraft, TailoredCV
 from services.cv_tailoring import filename_for
 from services.master_template import (
     BODY_SIZE_PT, BULLET_GAP_PT, BULLET_INDENT_PT, BULLET_LINE_PT, COLUMN_START_PT,
@@ -607,6 +608,50 @@ def cv_to_text(cv: TailoredCV) -> str:
 def export_txt(cv: TailoredCV, path: str | Path) -> str:
     path = _safe_path(Path(path))
     path.write_text(cv_to_text(cv), encoding="utf-8")
+    return str(path)
+
+
+def export_cover_letter_docx(draft: CoverLetterDraft, path: str | Path, *,
+                             generated_on: date | None = None) -> str:
+    """One-page business-letter DOCX.
+
+    Unlike a CV, a cover letter is not populated into the master CV template: it
+    uses a plain single-column letter layout with the same readable serif family.
+    """
+    from docx import Document
+    from docx.shared import Inches, Pt
+
+    document = Document()
+    for section in document.sections:
+        section.top_margin = Inches(1)
+        section.bottom_margin = Inches(1)
+        section.left_margin = Inches(1)
+        section.right_margin = Inches(1)
+    normal = document.styles["Normal"]
+    normal.font.name = "Times New Roman"
+    normal.font.size = Pt(11)
+    normal.paragraph_format.line_spacing = 1.15
+    normal.paragraph_format.space_after = Pt(6)
+
+    def paragraph(text: str = "", *, bold: bool = False, after: float = 6) -> None:
+        par = document.add_paragraph()
+        run = par.add_run(text)
+        run.bold = bold
+        par.paragraph_format.space_after = Pt(after)
+
+    paragraph(draft.signature, bold=True, after=0)
+    for line in draft.contact_lines:
+        paragraph(line, after=0)
+    paragraph("")
+    paragraph((generated_on or date.today()).strftime("%d %B %Y"), after=12)
+    paragraph(draft.greeting, after=8)
+    for body in draft.paragraphs:
+        paragraph(body.text, after=8)
+    paragraph(draft.closing, after=18)
+    paragraph(draft.signature, after=0)
+
+    path = _safe_path(Path(path))
+    document.save(str(path))
     return str(path)
 
 
