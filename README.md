@@ -50,12 +50,12 @@ The central rule is simple:
 | **Interface** | Streamlit, nine pages, dark by default with a warm-paper light theme |
 | **Runtime** | Python 3.11+ (verified on 3.11.9) |
 | **Storage** | SQLite by default (`data/consul.db`); any SQLAlchemy URL is accepted |
-| **AI** | Google Gemini by default; any OpenAI-compatible provider, or a local Ollama |
+| **AI** | Automatic Gemini + Groq routing; any OpenAI-compatible provider, or a local Ollama |
 | **Offline** | Fully usable without an LLM: deterministic planning, scoring and CV generation |
 | **Sources** | 14 connectors: nine ATS platforms, three aggregators, web search, generic career pages |
 | **Documents** | ATS-safe DOCX, PDF and TXT generated from a fixed master template |
 | **Privacy** | Local data only, redacting logs, SSRF protection, export/backup/delete controls |
-| **Tests** | 175 tests, all HTTP mocked; suite runs in about 30–70 seconds |
+| **Tests** | 197 tests, all HTTP mocked; suite runs in about 30–70 seconds |
 
 ### Design principles
 
@@ -454,8 +454,8 @@ A source that is disabled or not selected is listed as not scanned, not as healt
   `rationale`)
 - source (`llm` or `rule_based`) and warnings
 
-**With an LLM**, Gemini or the configured OpenAI-compatible provider receives the verified
-profile, category context, category catalogue and skills. **Without one**, the rule-based planner
+**With an LLM**, the automatic planning route (Groq first, Gemini as fallback) receives the
+verified profile, category context, category catalogue and skills. **Without one**, the rule-based planner
 uses the same taxonomy, country-to-language mapping, local recruitment terms and role
 translations. Explicit target titles always lead; category seeds only add alternatives.
 
@@ -905,16 +905,40 @@ All configuration is environment based. `.env` in the project root is loaded aut
 `load_dotenv(override=False)`, so real environment variables win. Secrets are never written to
 SQLite, logs or the UI.
 
-### LLM providers
+### Automatic LLM routing
 
-`LLM_PROVIDER` selects the backend. Gemini speaks its native API; every other provider uses the
-OpenAI `/chat/completions` shape.
+Users never choose a model. The application assigns each kind of work to the model that fits it
+best and keeps an ordered fallback chain, so a free-tier `429`, a timeout or a bad JSON response
+degrades to the next provider instead of failing the user's workflow.
+
+| Task | Primary | Fallbacks | Used by |
+| --- | --- | --- | --- |
+| `extraction` | Gemini 3.8 Flash | Gemini 3.5 Flash-Lite → Groq GPT-OSS 120B | CV extraction, job requirement extraction |
+| `reasoning` | Gemini 3.8 Flash | Groq GPT-OSS 120B → Gemini 3.5 Flash-Lite | CV tailoring, CV audit |
+| `writing` | Groq GPT-OSS 120B | Gemini 3.8 Flash → Gemini 3.5 Flash-Lite | Cover letters, recruiter emails |
+| `planning` | Groq GPT-OSS 120B | Gemini 3.8 Flash → Gemini 3.5 Flash-Lite | Search planning |
+| `utility` | Groq GPT-OSS 20B | Gemini 3.5 Flash-Lite | Small, low-stakes calls |
+
+Both keys are independent quota pools. If only one key is configured, the app skips the missing
+provider and uses the rest of the chain. After a capacity error, that provider is paused for
+`LLM_COOLDOWN_SECONDS` so the next request does not immediately hit the same limit.
+
+Each route carries its own output cap: Gemini routes can use `LLM_MAX_OUTPUT_TOKENS` (default
+8192), while Groq routes are capped lower so a single response cannot consume its entire
+8,000-tokens/minute free budget. Groq routes also skip prompts longer than about 16,000
+characters; those fall through to Gemini instead of sending a request that would exceed Groq's
+per-minute token limit.
+
+### Provider presets
+
+`LLM_PROVIDER` remains available as a legacy single-provider fallback for custom installations.
+All providers use the OpenAI `/chat/completions` shape.
 
 | `LLM_PROVIDER` | Default base URL | Default model |
 | --- | --- | --- |
-| `gemini` | native Google Gen AI SDK | `gemini-2.5-flash` |
-| `openai` | `https://api.openai.com/v1` | `gpt-4o-mini` |
 | `groq` | `https://api.groq.com/openai/v1` | `openai/gpt-oss-20b` |
+| `gemini` | `https://generativelanguage.googleapis.com/v1beta/openai` | `gemini-3.8-flash` |
+| `openai` | `https://api.openai.com/v1` | `gpt-4o-mini` |
 | `openrouter` | `https://openrouter.ai/api/v1` | `openai/gpt-4o-mini` |
 | `deepseek` | `https://api.deepseek.com/v1` | `deepseek-chat` |
 | `mistral` | `https://api.mistral.ai/v1` | `mistral-small-latest` |
@@ -923,8 +947,8 @@ OpenAI `/chat/completions` shape.
 | `ollama` | `http://localhost:11434/v1` | `llama3.1` |
 | `custom` | must set `LLM_BASE_URL` | must set `LLM_MODEL` |
 
-`LLM_BASE_URL` and `LLM_MODEL` override the preset. `LLM_API_KEY` is accepted as an alias for
-`ZAI_API_KEY`, and `LLM_BASE_URL` for `ZAI_API_BASE`.
+`LLM_BASE_URL` and `LLM_MODEL` override the legacy preset. `LLM_API_KEY` is also accepted as an
+alias for `ZAI_API_KEY`, and `LLM_BASE_URL` for `ZAI_API_BASE`.
 
 ### Environment variables
 
@@ -932,21 +956,23 @@ OpenAI `/chat/completions` shape.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `LLM_PROVIDER` | `gemini` | Provider selection |
+| `GROQ_API_KEY` | — | Groq key for drafting and planning |
+| `GEMINI_API_KEY` | — | Gemini key for extraction and reasoning |
 | `LLM_ENABLED` | `1` | Set `0` to disable all model calls |
-| `GEMINI_API_KEY` | — | Key for the Gemini provider |
-| `GEMINI_MODEL` | `gemini-2.5-flash` | Gemini model |
-| `LLM_API_KEY` | — | Key for any non-Gemini provider |
-| `LLM_MODEL` | provider default | Model override |
-| `LLM_BASE_URL` | provider default | Endpoint override |
+| `LLM_COOLDOWN_SECONDS` | `180` | Pause a provider after a rate limit |
+| `LLM_PROVIDER` | `groq` | Legacy provider fallback |
+| `LLM_API_KEY` | — | Key for a legacy non-Groq/Gemini provider |
+| `LLM_MODEL` | provider default | Legacy model override |
+| `LLM_BASE_URL` | provider default | Legacy endpoint override |
 | `LLM_TIMEOUT_SECONDS` | `45` | Hard per-request timeout |
-| `LLM_MAX_OUTPUT_TOKENS` | `8192` | Output cap |
-| `LLM_REASONING_EFFORT` | empty | `low`, `medium` or `high` for reasoning models |
+| `LLM_MAX_OUTPUT_TOKENS` | `8192` | Global output cap |
+| `LLM_REASONING_EFFORT` | empty | `low`, `medium` or `high` for legacy reasoning models |
+| `LLM_ROUTE_<TASK>` | built-in | Override a route with `provider:model,...` |
 
-> **Groq note.** Groq's free tier counts `max_tokens` against an 8,000 tokens/minute budget. Use
-> `LLM_MAX_OUTPUT_TOKENS=6000` and `LLM_REASONING_EFFORT=low`. If a reasoning model spends the
-> whole budget on reasoning and returns no answer, CONSUL reports exactly that instead of a
-> generic empty response.
+> **Groq note.** Groq's free tier counts `max_tokens` against an 8,000 tokens/minute budget. The
+> built-in Groq routes cap output at 4096 (2048 for utility work) so one response cannot consume
+> the whole per-minute budget. If a reasoning model spends its budget on reasoning and returns
+> no answer, CONSUL reports exactly that instead of a generic empty response.
 
 #### Storage
 
@@ -1013,8 +1039,9 @@ inlined, so nothing loads from the network.
    ```bash
    streamlit run app.py
    ```
-2. **Add an LLM key (optional).** Edit `.env` and set `GEMINI_API_KEY`, or choose another
-   provider. Without a key, skip straight to the next step.
+2. **Add LLM keys (optional).** Edit `.env` and set `GROQ_API_KEY` and/or
+   `GEMINI_API_KEY`. The app routes work automatically. Without a key, skip straight to the next
+   step.
 3. **Build the Ground Truth.** Open **Ground Truth CV** → **Upload a CV**, choose a PDF/DOCX and
    start extraction. If extraction is unavailable or unsatisfactory, use **Enter manually**.
 4. **Review the evidence ledger.** Check each fact, its source and its status. Reject anything
@@ -1140,10 +1167,11 @@ exercised here.
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| "No LLM is configured" | No key, or `LLM_ENABLED=0` | Set `GEMINI_API_KEY` or `LLM_PROVIDER` + `LLM_API_KEY`; restart or reload `.env` |
+| "No LLM is configured" | No key, or `LLM_ENABLED=0` | Set `GROQ_API_KEY` and/or `GEMINI_API_KEY`; restart or reload `.env` |
 | LLM calls time out | Slow provider or large output | Lower `LLM_TIMEOUT_SECONDS`; the request already has a hard timeout |
 | Provider returns an empty answer | Reasoning model consumed the output budget | Choose a non-reasoning model or raise `LLM_MAX_OUTPUT_TOKENS` |
-| Groq 429 / rate limited | Free-tier token budget | Use `LLM_MAX_OUTPUT_TOKENS=6000`, `LLM_REASONING_EFFORT=low` |
+| Groq 429 / rate limited | Free-tier token budget | The route falls back automatically; lower `LLM_MAX_OUTPUT_TOKENS` if it persists |
+| All providers cooling down | Both free tiers exhausted | Wait for the cooldown, add a paid key, or reduce calls |
 | Scan finds nothing | No source configured or enabled | Add ATS boards or API keys in Search Configuration; check Diagnostics |
 | All sources `configuration_missing` | Seed variables or keys are empty | Fill them in `.env`, then **Reload .env** or **Seed boards from .env** |
 | A source is `restricted` | Site blocks automated access | Use Manual Search Assistance; CONSUL will not bypass it |
