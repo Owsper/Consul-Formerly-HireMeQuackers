@@ -141,9 +141,9 @@ def _render_start() -> None:
 
         if not get_settings().llm_available:
             st.info(
-                "Structured extraction needs an LLM key (GEMINI_API_KEY, or LLM_PROVIDER + "
-                "LLM_API_KEY). Without one, upload extracts the raw text and you can enter the "
-                "structured profile manually — no data is invented."
+                "Structured extraction needs an LLM key (GROQ_API_KEY and/or GEMINI_API_KEY, "
+                "or LLM_PROVIDER + LLM_API_KEY). Without one, upload extracts the raw text "
+                "and you can enter the structured profile manually — no data is invented."
             )
 
     with manual_tab:
@@ -625,8 +625,8 @@ def _render_merge() -> None:
     uploaded = st.file_uploader("Additional PDF/DOCX", type=["pdf", "docx"], key="gt_merge_file")
     if uploaded is not None and st.button("Extract and merge"):
         if not get_settings().llm_available:
-            st.warning("Merging needs an LLM. Configure GEMINI_API_KEY (or LLM_PROVIDER + "
-                       "LLM_API_KEY), or paste the facts manually.")
+            st.warning("Merging needs an LLM. Configure GROQ_API_KEY and/or GEMINI_API_KEY "
+                       "(or LLM_PROVIDER + LLM_API_KEY), or paste the facts manually.")
             return
         with st.spinner("Extracting and merging…"):
             try:
