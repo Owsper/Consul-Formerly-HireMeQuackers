@@ -792,6 +792,7 @@ def _llm_body(prompt_name: str, profile: CandidateProfileData, evidence: list[Ev
             requirements=_requirements_payload(job, match),
             keyword_targets=extracted.prompt_text(),
             output_language=language,
+            task="writing",
         )
     except Exception as exc:
         logger.warning("LLM %s draft failed, using the deterministic builder: %s", prompt_name, exc)
