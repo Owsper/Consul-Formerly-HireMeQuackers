@@ -141,6 +141,29 @@ def _bullet_score(text: str, job: JobRecord, terms: set[str]) -> float:
     return score
 
 
+def _project_must_terms(job: JobRecord) -> list[str]:
+    """Requirements a project must satisfy to be worth showing for this job.
+
+    Languages are included because ``job_terms`` already treats them as
+    must-haves. Preferred skills deliberately do not qualify a project: they
+    only affect ordering, so an adjacent technology such as REST APIs cannot
+    pull an unrelated project into a specialised frontend CV.
+    """
+    return list(job_terms(job).must_have)
+
+
+def _project_relevance(project: Any, job: JobRecord, terms: set[str]) -> tuple[float, bool]:
+    """Score a project using its prose, name, role and verified technologies."""
+    blob = " ".join([
+        project.name or "", project.role or "", project.description or "",
+        project.implementation or "", project.measurable_results or "",
+        *project.verified_achievements, *project.technologies,
+    ])
+    must_terms = _project_must_terms(job)
+    must_match = any(text_contains_skill(blob, term) for term in must_terms)
+    return _bullet_score(blob, job, terms), must_match
+
+
 def _pick_bullets(texts: list[str], ids: list[list[str]], job: JobRecord,
                   terms: set[str], limit: int = 5) -> list[CVBullet]:
     scored = []
@@ -342,8 +365,15 @@ def _project_sections(profile: CandidateProfileData, evidence: list[EvidenceItem
             _ids_for_path(evidence, f"projects[{i}].achievements[{j}]", a)
             for j, a in enumerate(project.verified_achievements)
         ]
-        relevance = _bullet_score(" ".join(texts), job, terms)
-        if relevance < 3 and len(profile.projects) > 2:
+        relevance, must_match = _project_relevance(project, job, terms)
+        must_terms = _project_must_terms(job)
+        if must_terms:
+            # Matching one must-have requirement is enough. A project does not
+            # have to satisfy every requirement in the advert.
+            if not must_match:
+                continue
+        elif relevance < 3:
+            # No structured must-haves at all: fall back to the text score.
             continue
         bullets = _pick_bullets(texts, ids, job, terms, limit=4)
         if not bullets:
@@ -540,6 +570,18 @@ def _clean_text(text: str) -> str:
     return normalize_whitespace(text)
 
 
+def _cv_includes_profile_project(cv: TailoredCV,
+                                 profile: CandidateProfileData) -> bool:
+    """Whether any verified profile project survived into the CV."""
+    titles = [normalize_text(entry.title) for section in cv.sections
+              for entry in section.entries if entry.title]
+    for project in profile.projects:
+        key = normalize_text(project.name or project.role)
+        if key and any(key in title or title in key for title in titles):
+            return True
+    return False
+
+
 def validate_cv(cv: TailoredCV, profile: CandidateProfileData,
                 evidence: list[EvidenceItem], job: JobRecord,
                 *, removed_content: list[str] | None = None) -> ValidationReport:
@@ -623,6 +665,13 @@ def validate_cv(cv: TailoredCV, profile: CandidateProfileData,
             message=("The draft contains no evidence-cited experience or project bullets. "
                      "Regenerate with the deterministic builder and review the result."),
         ))
+    if profile.projects and not _cv_includes_profile_project(cv, profile):
+        issues.append(ValidationIssue(
+            severity="warning", code="no_relevant_projects",
+            message=("No verified project matched this job's must-have requirements, so the "
+                     "CV has no Project Experience section. Add a relevant project or review "
+                     "the target role."),
+        ))
 
     # Contact details
     if not profile.personal.email:
@@ -689,9 +738,13 @@ def validate_cv(cv: TailoredCV, profile: CandidateProfileData,
                                       message="The CV is likely longer than two pages; remove less relevant bullets."))
 
     # Requirement coverage
-    cv_text = " ".join([cv.summary, *[b.text for b in bullets],
-                        *[sk for s in cv.sections for sk in s.skills],
-                        *[row.text for s in cv.sections for row in s.rows]])
+    cv_text = " ".join([
+        cv.summary, *[b.text for b in bullets],
+        *[sk for s in cv.sections for sk in s.skills],
+        *[row.text for s in cv.sections for row in s.rows],
+        *[value for s in cv.sections for e in s.entries
+          for value in (e.title, e.organization, *e.technologies)],
+    ])
     matched = [r for r in job.required_skills if text_contains_skill(cv_text, r)]
     unmet = [r for r in job.required_skills if r not in matched]
     if unmet:
@@ -776,6 +829,7 @@ def _llm_generate(profile: CandidateProfileData, evidence: list[EvidenceItem],
             keyword_targets=extracted.prompt_text(),
             ats_rules=ats_prompt_rules(),
             output_language=language,
+            task="reasoning",
         )
         cv = TailoredCV(
             header=CVHeader.model_validate(response.header or {}),
@@ -814,6 +868,7 @@ async def audit_cv_with_llm(cv: TailoredCV, profile: CandidateProfileData,
             job_json=job.model_dump_json(indent=2)[:12000],
             ats_rules=ats_prompt_rules(),
             keyword_targets=job_terms(job).prompt_text(),
+            task="reasoning",
         )
     except Exception as exc:
         logger.info("LLM CV audit skipped: %s", exc)
