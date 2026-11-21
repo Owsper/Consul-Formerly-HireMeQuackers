@@ -219,6 +219,39 @@ def coverage(required: list[str], candidate_text: str) -> tuple[list[str], list[
     return matched, missing
 
 
+# A heading that starts a block belonging to the site, not to the advert:
+# neighbouring postings, talent pools, share widgets. Everything from such a
+# line onwards is dropped before skill extraction, so "Other open roles: Go,
+# Rust, PHP" can never turn into requirements of the job the user pasted.
+LISTING_END_RE = re.compile(
+    r"^(?:(?:other|further|similar|related|more|additional)\s+(?:open\s+)?"
+    r"(?:roles?|jobs?|openings?|vacanc(?:y|ies)|positions?)\b|"
+    r"view\s+all\s+(?:jobs?|roles?|openings?)\b|"
+    r"all\s+(?:open\s+)?(?:jobs?|roles?|positions?)\s+(?:at|in)\b|"
+    r"share\s+(?:this\s+)?(?:job|role|posting)\b|talent\s+pool\b|"
+    r"weitere\s+(?:stellen|jobs|stellenangebote|positionen)\b|"
+    r"ähnliche\s+(?:stellen|jobs|stellenangebote|positionen)\b|"
+    r"andere\s+(?:stellen|jobs|stellenangebote)\b|"
+    r"alle\s+(?:offenen\s+)?(?:stellen|jobs|stellenangebote)\b|"
+    r"autres\s+(?:offres|postes)\b|offres\s+similaires\b|"
+    r"otras\s+ofertas\b|ofertas\s+similares\b)",
+    re.I,
+)
+
+
+def strip_listing_boilerplate(text: str) -> str:
+    """Cut a scraped job text at the first related-postings/footer block."""
+    kept: list[str] = []
+    for line in (text or "").splitlines():
+        cleaned = re.sub(r"^[#*\-\s]+", "", line).strip(" :").strip()
+        is_bullet = bool(re.match(r"^\s*(?:[-\u2022*\u00b7\u2013]|\d+[.)])\s+", line))
+        if (cleaned and not is_bullet and len(cleaned) <= 80
+                and LISTING_END_RE.match(cleaned)):
+            break
+        kept.append(line)
+    return "\n".join(kept).strip()
+
+
 def truncate(text: str, limit: int) -> str:
     text = normalize_whitespace(text)
     if len(text) <= limit:
