@@ -21,12 +21,16 @@ def isolated_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     data_dir = tmp_path / "data"
     monkeypatch.setenv("DATA_DIR", str(data_dir))
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{(tmp_path / 'consul.db').as_posix()}")
+    monkeypatch.setenv("GROQ_API_KEY", "")
     monkeypatch.setenv("GEMINI_API_KEY", "")
     monkeypatch.setenv("LLM_ENABLED", "1")
-    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+    monkeypatch.setenv("LLM_PROVIDER", "groq")
     monkeypatch.setenv("LLM_API_KEY", "")
     monkeypatch.setenv("LLM_MODEL", "")
     monkeypatch.setenv("LLM_BASE_URL", "")
+    monkeypatch.setenv("LLM_COOLDOWN_SECONDS", "180")
+    for route in ("EXTRACTION", "REASONING", "WRITING", "PLANNING", "UTILITY"):
+        monkeypatch.setenv(f"LLM_ROUTE_{route}", "")
     monkeypatch.setenv("ADZUNA_APP_ID", "")
     monkeypatch.setenv("ADZUNA_APP_KEY", "")
     monkeypatch.setenv("JOOBLE_API_KEY", "")
