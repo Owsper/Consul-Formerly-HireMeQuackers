@@ -1,10 +1,13 @@
 from pathlib import Path
 
-from core.schemas import CVBullet, CVEntry, CVSection, TailoredCV
+from core.schemas import (
+    CVBullet, CVEntry, CVSection, JobRecord, ProjectEntry, TailoredCV,
+)
 from services.cv_tailoring import (
     build_rule_based_cv, sanitize_cv, tailor_cv, validate_cv,
 )
 from services.document_export import export_cv, cv_to_text
+from services.profile_service import synthesize_evidence
 
 
 def test_rule_based_cv_cites_evidence(profile_data, evidence, job_record):
@@ -87,3 +90,113 @@ def test_cv_never_modifies_ground_truth(profile_data, evidence, job_record):
     before = profile_data.model_dump_json()
     tailor_cv(profile_data, evidence, job_record, use_llm=False)
     assert profile_data.model_dump_json() == before
+
+
+def _frontend_job(**overrides) -> JobRecord:
+    data = {
+        "source": "manual",
+        "source_job_id": "frontend-1",
+        "title": "Frontend Developer",
+        "company": "Acme",
+        "required_skills": ["HTML", "CSS", "FastAPI"],
+        "description": "Build web interfaces with HTML and CSS and APIs with FastAPI.",
+    }
+    data.update(overrides)
+    return JobRecord(**data)
+
+
+def _project_titles(cv) -> list[str]:
+    return [entry.title for section in cv.sections
+            if "Project" in section.heading for entry in section.entries]
+
+
+def test_one_must_have_technology_is_enough_to_include_a_project(profile_data):
+    profile = profile_data.model_copy(deep=True)
+    profile.employment = []
+    profile.projects = [
+        ProjectEntry(
+            name="Vera", description="Desktop application with a backend for church management.",
+            technologies=["Python", "PySide6", "FastAPI", "REST APIs"],
+        ),
+        ProjectEntry(
+            name="Unrelated", description="Spreadsheet automation for a local club.",
+            technologies=["Excel"],
+        ),
+    ]
+    evidence = synthesize_evidence(profile)
+
+    cv = build_rule_based_cv(profile, evidence, _frontend_job())
+    titles = _project_titles(cv)
+
+    # FastAPI is one must-have requirement, so Vera qualifies even though the
+    # project does not claim HTML or CSS.
+    assert any("Vera" in title for title in titles)
+    assert all("Unrelated" not in title for title in titles)
+
+
+def test_web_frontend_rejects_a_desktop_only_project(profile_data):
+    profile = profile_data.model_copy(deep=True)
+    profile.employment = []
+    profile.projects = [
+        ProjectEntry(
+            name="Vera", description="Desktop application with a backend for church management.",
+            technologies=["Python", "PySide6", "FastAPI", "REST APIs"],
+        ),
+        ProjectEntry(
+            name="Web dashboard", description="Internal reporting dashboard.",
+            technologies=["React", "TypeScript", "HTML", "CSS"],
+        ),
+    ]
+    evidence = synthesize_evidence(profile)
+    job = _frontend_job(
+        required_skills=["React", "TypeScript", "JavaScript", "HTML", "CSS"],
+        preferred_skills=["REST APIs"],
+        description="Build responsive web applications with React and TypeScript.",
+    )
+
+    titles = _project_titles(build_rule_based_cv(profile, evidence, job))
+
+    assert any("Web dashboard" in title for title in titles)
+    assert all("Vera" not in title for title in titles)
+
+
+def test_no_relevant_projects_is_reported_instead_of_silently_dropped(profile_data):
+    profile = profile_data.model_copy(deep=True)
+    profile.projects = [
+        ProjectEntry(name="Vera", description="Desktop app with FastAPI.",
+                     technologies=["Python", "PySide6", "FastAPI"]),
+        ProjectEntry(name="OCR benchmark", description="Benchmarked OCR models.",
+                     technologies=["Python", "PaddleOCR"]),
+        ProjectEntry(name="Job tracker", description="Tracked job applications.",
+                     technologies=["Python", "Streamlit"]),
+    ]
+    evidence = synthesize_evidence(profile)
+    job = _frontend_job(
+        required_skills=["React", "TypeScript"],
+        description="Build web applications with React and TypeScript.",
+    )
+
+    cv, report = tailor_cv(profile, evidence, job, use_llm=False)
+
+    assert _project_titles(cv) == []
+    assert any(issue.code == "no_relevant_projects" for issue in report.issues)
+
+
+def test_project_filter_is_the_same_with_two_projects(profile_data):
+    profile = profile_data.model_copy(deep=True)
+    profile.projects = [
+        ProjectEntry(name="Vera", description="Desktop app with FastAPI.",
+                     technologies=["Python", "PySide6", "FastAPI"]),
+        ProjectEntry(name="OCR benchmark", description="Benchmarked OCR models.",
+                     technologies=["Python", "PaddleOCR"]),
+    ]
+    evidence = synthesize_evidence(profile)
+    job = _frontend_job(
+        required_skills=["React", "TypeScript"],
+        description="Build web applications with React and TypeScript.",
+    )
+
+    cv = build_rule_based_cv(profile, evidence, job)
+
+    # A two-project profile must not bypass the relevance filter.
+    assert _project_titles(cv) == []
