@@ -7,10 +7,13 @@ __pycache__/
 .coverage
 htmlcov/
 data/*.db
+data/*.db-wal
+data/*.db-shm
 data/*.sqlite3
+data/*.sqlite3-wal
+data/*.sqlite3-shm
 data/exports/
 data/uploads/
 data/backups/
 .streamlit/secrets.toml
 *.log
-
