@@ -31,6 +31,7 @@ from connectors.base import (
 )
 from connectors.company_careers import CompanyCareersConnector
 from connectors.greenhouse import GreenhouseConnector
+from connectors.jobteaser import JobTeaserConnector
 from connectors.jooble import JoobleConnector
 from connectors.lever import LeverConnector
 from connectors.personio import PersonioConnector
@@ -57,8 +58,8 @@ logger = get_logger("orchestrator")
 CONNECTOR_CLASSES: list[type[BaseConnector]] = [
     GreenhouseConnector, LeverConnector, AshbyConnector, SmartRecruitersConnector,
     WorkableConnector, RecruiteeConnector, PersonioConnector, WorkdayConnector,
-    TeamTailorConnector, AdzunaConnector, JoobleConnector, SearchEngineConnector,
-    CompanyCareersConnector,
+    TeamTailorConnector, AdzunaConnector, JoobleConnector, JobTeaserConnector,
+    SearchEngineConnector, CompanyCareersConnector,
 ]
 
 SOURCE_TIMEOUT_SECONDS = 150.0
