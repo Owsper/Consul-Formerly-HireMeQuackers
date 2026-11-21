@@ -25,7 +25,7 @@ from services.job_scoring import score_record
 from services.job_service import get_match, row_to_record
 from services.layout_verification import compare_layout
 from services.master_template import MASTER_FILENAME
-from services.profile_service import get_active_profile
+from services.profile_service import get_active_profile, get_profile, profile_to_payload
 from services.settings_service import get_setting, set_setting
 
 logger = get_logger("cv_service")
@@ -65,6 +65,7 @@ def generate_cv_for_job(session: Session, job_id: str, *, use_llm: bool = True,
     files = export_cv(cv, out_dir=settings.exports_dir, version=version,
                       formats=formats, template_path=template_path)
     _attach_layout_report(report, files)
+    _attach_document_audit(report, files, cv, job, payload.evidence, payload.data)
 
     row = TailoredCVRow(
         job_id=job_id, profile_id=profile_row.id, version=version,
@@ -131,6 +132,41 @@ def reexport(session: Session, cv_id: int, *, formats: tuple[str, ...] = ("docx"
     row.validation_json = report.model_dump_json()
     session.flush()
     return files
+
+
+def _attach_document_audit(report: ValidationReport, files: dict[str, str],
+                           cv: TailoredCV, job, evidence, profile) -> None:
+    """Score the exported file the way an ATS pipeline would read it."""
+    from services.ats_audit import audit_document
+
+    audit = audit_document(cv=cv, job=job, profile=profile, evidence=evidence,
+                           pdf_path=files.get("pdf"), docx_path=files.get("docx"))
+    report.ats_report = dict(report.ats_report or {})
+    report.ats_report["document_audit"] = audit
+
+
+def ensure_document_audit(session: Session, row: TailoredCVRow) -> dict:
+    """Return the stored document audit, computing it once for older versions."""
+    cv, report = load_cv(row)
+    stored = (report.ats_report or {}).get("document_audit") or {}
+    if stored:
+        return stored
+    job_row = session.get(Job, row.job_id)
+    profile_row = get_profile(session, row.profile_id) if row.profile_id else None
+    if job_row is None or profile_row is None:
+        return {}
+
+    from services.ats_audit import audit_document
+
+    payload = profile_to_payload(profile_row)
+    audit = audit_document(cv=cv, job=row_to_record(job_row), profile=payload.data,
+                           evidence=payload.evidence, pdf_path=row.pdf_path or None,
+                           docx_path=row.docx_path or None)
+    report.ats_report = dict(report.ats_report or {})
+    report.ats_report["document_audit"] = audit
+    row.validation_json = report.model_dump_json()
+    session.flush()
+    return audit
 
 
 def _attach_layout_report(report: ValidationReport, files: dict[str, str]) -> None:
