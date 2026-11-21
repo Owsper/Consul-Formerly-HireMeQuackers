@@ -3,21 +3,27 @@
 from __future__ import annotations
 
 import asyncio
+import tempfile
 from pathlib import Path
 
 import streamlit as st
 
 from config import get_settings
 from core.database import session_scope
-from core.exceptions import consulError
+from core.exceptions import ProfileNotFoundError, consulError
 from core.models import Job
+from services.application_documents import (
+    cover_letter_filename, email_filename, generate_cover_letter, generate_recruiter_email,
+    load_cover_letter, load_recruiter_email, save_cover_letter, save_recruiter_email,
+)
+from services.application_service import ensure_application, update_application
 from services.cv_service import (
     approve_cv, ensure_document_audit, generate_cv_for_job, get_version, is_cv_approved,
     list_versions, load_cv, reexport, revoke_cv_approval,
 )
 from services.cv_tailoring import audit_cv_with_llm
-from services.document_export import pdf_render_source
-from services.job_service import get_match, list_jobs
+from services.document_export import export_cover_letter_docx, pdf_render_source
+from services.job_service import get_match, list_jobs, row_to_record
 from services.master_template import MASTER_FILENAME
 from services.profile_service import get_active_profile
 from ui import components as c
@@ -84,6 +90,37 @@ def render() -> None:
     if job is None:
         return
 
+    tab_cv, tab_letter, tab_email = st.tabs(
+        ["Tailored CV", "Cover letter", "Recruiter email"]
+    )
+    with tab_cv:
+        _render_cv_tab(job)
+    with tab_letter:
+        _render_cover_letter_tab(job)
+    with tab_email:
+        _render_email_tab(job)
+
+
+def _generation_context(job_id: str):
+    """Ground Truth plus the target job, detached from the session."""
+    with session_scope() as session:
+        active = get_active_profile(session)
+        if active is None:
+            raise ProfileNotFoundError(
+                "Approve a Ground Truth profile before drafting application documents."
+            )
+        _, payload = active
+        job_row = session.get(Job, job_id)
+        if job_row is None:
+            raise consulError("That job no longer exists.")
+        return payload.data, payload.evidence, row_to_record(job_row), get_match(session, job_id)
+
+
+def _language_index(job: dict) -> int:
+    return list(LANGUAGES).index(job["language"]) if job["language"] in LANGUAGES else 0
+
+
+def _render_cv_tab(job: dict) -> None:
     left, right = st.columns([1.15, 1])
     with left:
         st.markdown(
@@ -347,6 +384,194 @@ def _render_versions(job_id: str) -> None:
             st.markdown(f"- {c.esc(bullet.text)} " +
                         " ".join(c.badge(i, "neutral") for i in bullet.evidence_ids),
                         unsafe_allow_html=True)
+
+
+def _render_cover_letter_tab(job: dict) -> None:
+    settings = get_settings()
+    st.caption(
+        "A one-page cover letter that connects your verified evidence to this posting. "
+        "The recipient, greeting and sign-off are never guessed, and no fact about the "
+        "company is assumed beyond this job's own data."
+    )
+    col1, col2, col3 = st.columns(3)
+    language = col1.selectbox("Letter language", list(LANGUAGES), index=_language_index(job),
+                              format_func=lambda code: LANGUAGES[code], key="cl_language")
+    recipient_name = col2.text_input(
+        "Recipient name (optional)", key="cl_recipient_name",
+        help="Leave blank to address the hiring manager generically. A name is never invented.",
+    )
+    recipient_title = col3.text_input(
+        "Recipient role (optional)", key="cl_recipient_title",
+        placeholder="e.g. Talent Acquisition Manager",
+    )
+    use_llm = st.checkbox(
+        "Use Gemini drafting", value=settings.llm_available,
+        disabled=not settings.llm_available, key="cl_use_llm",
+        help="Without an LLM, the deterministic evidence-only letter is used.",
+    )
+
+    if st.button("Generate cover letter", type="primary", key="cl_generate"):
+        with st.spinner("Selecting evidence, drafting and validating the letter…"):
+            try:
+                data, evidence, record, match = _generation_context(job["id"])
+                draft, report = generate_cover_letter(
+                    data, evidence, record, match, use_llm=use_llm, language=language,
+                    recipient_name=recipient_name, recipient_title=recipient_title,
+                )
+                with session_scope() as session:
+                    save_cover_letter(session, job["id"], draft, report)
+            except consulError as exc:
+                st.error(exc.message)
+                return
+            except Exception as exc:  # pragma: no cover
+                st.error(f"Cover letter generation failed: {type(exc).__name__}: {exc}")
+                return
+        st.rerun()
+
+    with session_scope() as session:
+        stored = load_cover_letter(session, job["id"])
+    if stored is None:
+        st.caption("No cover letter yet for this job. Generate one above.")
+        return
+    draft, report = stored
+
+    st.markdown(
+        c.badge("Passed" if report.passed else "Needs attention",
+                "success" if report.passed else "danger")
+        + " " + c.badge(f"{draft.word_count()} words", "brand")
+        + " " + c.badge(f"Evidence coverage {report.evidence_coverage:.0%}", "neutral")
+        + " " + c.badge(draft.generator.replace("_", " ").title(), "neutral"),
+        unsafe_allow_html=True,
+    )
+    st.code(draft.to_text(), language="text")
+
+    col_txt, col_docx, col_save = st.columns(3)
+    col_txt.download_button(
+        "Download .txt", draft.to_text().encode("utf-8"),
+        file_name=cover_letter_filename(draft, "txt"), mime="text/plain",
+        key=f"cl_txt_{job['id']}", use_container_width=True,
+    )
+    with tempfile.TemporaryDirectory(prefix="consul-letter-") as tmp:
+        docx_path = export_cover_letter_docx(
+            draft, Path(tmp) / cover_letter_filename(draft, "docx")
+        )
+        docx_bytes = Path(docx_path).read_bytes()
+    col_docx.download_button(
+        "Download .docx", docx_bytes,
+        file_name=cover_letter_filename(draft, "docx"),
+        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        key=f"cl_docx_{job['id']}", use_container_width=True,
+    )
+    if col_save.button("Save to application tracker", key=f"cl_save_{job['id']}",
+                       use_container_width=True):
+        with session_scope() as session:
+            application, created = ensure_application(session, job["id"], status="Shortlisted")
+            update_application(session, application.id, cover_letter=draft.to_text())
+        st.success("Cover letter saved to the tracker." if not created
+                   else "Application added as Shortlisted with this cover letter.")
+
+    _render_letter_report(report)
+    _render_evidence_used(draft, "Cover letter evidence")
+    st.caption("The Ground Truth profile was not modified. Regenerating replaces this draft.")
+
+
+def _render_email_tab(job: dict) -> None:
+    settings = get_settings()
+    st.caption(
+        "A short, direct email for contacting a recruiter or hiring manager about this role. "
+        "The subject, greeting and sign-off are built from your profile and this posting — "
+        "no recruiter name, company culture or opening is invented."
+    )
+    col1, col2, col3 = st.columns(3)
+    language = col1.selectbox("Email language", list(LANGUAGES), index=_language_index(job),
+                              format_func=lambda code: LANGUAGES[code], key="em_language")
+    recipient_name = col2.text_input(
+        "Recipient name (optional)", key="em_recipient_name",
+        help="Leave blank to address the hiring manager generically. A name is never invented.",
+    )
+    recipient_title = col3.text_input(
+        "Recipient role (optional)", key="em_recipient_title",
+        placeholder="e.g. Talent Acquisition Manager",
+    )
+    use_llm = st.checkbox(
+        "Use Gemini drafting", value=settings.llm_available,
+        disabled=not settings.llm_available, key="em_use_llm",
+        help="Without an LLM, the deterministic evidence-only email is used.",
+    )
+
+    if st.button("Generate email draft", type="primary", key="em_generate"):
+        with st.spinner("Selecting evidence, drafting and validating the email…"):
+            try:
+                data, evidence, record, match = _generation_context(job["id"])
+                draft, report = generate_recruiter_email(
+                    data, evidence, record, match, use_llm=use_llm, language=language,
+                    recipient_name=recipient_name, recipient_title=recipient_title,
+                )
+                with session_scope() as session:
+                    save_recruiter_email(session, job["id"], draft, report)
+            except consulError as exc:
+                st.error(exc.message)
+                return
+            except Exception as exc:  # pragma: no cover
+                st.error(f"Email generation failed: {type(exc).__name__}: {exc}")
+                return
+        st.rerun()
+
+    with session_scope() as session:
+        stored = load_recruiter_email(session, job["id"])
+    if stored is None:
+        st.caption("No email draft yet for this job. Generate one above.")
+        return
+    draft, report = stored
+
+    st.markdown(
+        c.badge("Passed" if report.passed else "Needs attention",
+                "success" if report.passed else "danger")
+        + " " + c.badge(f"Subject: {draft.subject}", "brand")
+        + " " + c.badge(f"{draft.word_count()} words", "neutral")
+        + " " + c.badge(draft.generator.replace("_", " ").title(), "neutral"),
+        unsafe_allow_html=True,
+    )
+    st.code(draft.to_text(), language="text")
+    st.download_button(
+        "Download .txt", draft.to_text().encode("utf-8"),
+        file_name=email_filename(draft, "txt"), mime="text/plain",
+        key=f"em_txt_{job['id']}", use_container_width=True,
+    )
+
+    _render_letter_report(report)
+    _render_evidence_used(draft, "Email evidence")
+    if job.get("application_url"):
+        st.link_button("Open application page ↗", job["application_url"])
+    st.caption("If the posting asks you to apply through its portal, do that as well; "
+               "this email is for reaching the right person, not bypassing the process.")
+
+
+def _render_letter_report(report) -> None:
+    for issue in report.issues:
+        tone = "error" if issue.severity == "error" else ""
+        st.markdown(f'<div class="consul-flag {tone}"><b>{c.esc(issue.code)}</b> — '
+                    f'{c.esc(issue.message)}</div>', unsafe_allow_html=True)
+    if report.unsupported_claims:
+        with st.expander(f"Unsupported content ({len(report.unsupported_claims)})"):
+            for text in report.unsupported_claims:
+                st.write(f"- {text}")
+
+
+def _render_evidence_used(draft, title: str) -> None:
+    ids = draft.evidence_ids()
+    if not ids:
+        return
+    with session_scope() as session:
+        active = get_active_profile(session)
+        values = ({item.evidence_id: item.value for item in active[1].evidence}
+                  if active is not None else {})
+    with st.expander(f"{title} ({len(ids)} citations)"):
+        for evidence_id in ids[:24]:
+            st.markdown(
+                f"- {c.badge(evidence_id, 'neutral')} {c.esc(values.get(evidence_id, ''))}",
+                unsafe_allow_html=True,
+            )
 
 
 def _render_ats_audit(audit: dict) -> None:
