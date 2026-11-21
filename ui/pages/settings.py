@@ -17,13 +17,14 @@ from ui import components as c
 from ui.nav import go
 
 ENV_REFERENCE = [
-    ("GEMINI_API_KEY", "Gemini API key (used when LLM_PROVIDER=gemini)"),
-    ("GEMINI_MODEL", "Gemini model name, default gemini-2.5-flash"),
-    ("LLM_PROVIDER", "gemini (default), openai, groq, openrouter, deepseek, mistral, "
+    ("GROQ_API_KEY", "Groq key for high-volume drafting and planning routes"),
+    ("GEMINI_API_KEY", "Gemini key for extraction and high-stakes reasoning routes"),
+    ("LLM_PROVIDER", "legacy fallback: openai, openrouter, deepseek, mistral, "
                       "cerebras, zai, ollama or custom"),
-    ("LLM_API_KEY", "API key for any non-Gemini provider"),
-    ("LLM_MODEL", "Model name; defaults to the provider preset"),
-    ("LLM_BASE_URL", "Override the provider's base URL (required for custom)"),
+    ("LLM_API_KEY", "key for a legacy non-Groq/Gemini provider"),
+    ("LLM_COOLDOWN_SECONDS", "pause before retrying a provider after a rate limit"),
+    ("LLM_MODEL", "Legacy model override; automatic routes choose their own models"),
+    ("LLM_BASE_URL", "Legacy base URL override (required for custom)"),
     ("LLM_TIMEOUT_SECONDS / LLM_MAX_OUTPUT_TOKENS", "Request timeout and output cap"),
     ("LLM_ENABLED", "Set 0 for a fully offline run"),
     ("DATABASE_URL", "SQLAlchemy URL; defaults to the SQLite file in data/"),
@@ -107,7 +108,8 @@ def render() -> None:
     st.markdown(
         "- **Local by default.** Data lives in a local SQLite file; there is no account or cloud sync.\n"
         "- **EU/Germany defaults.** Data minimisation, purpose limitation and deletion are built in; "
-        "only the CV text you upload is sent to Gemini, and only when you trigger extraction or an LLM action.\n"
+        "only the CV text you upload is sent to your configured LLM providers, and only "
+        "when you trigger extraction or an LLM action.\n"
         "- **No hidden requests.** Every outbound job-board request appears in Search Diagnostics.\n"
         "- **No secrets in exports.** API keys live only in the environment.\n"
         "- **Application evidence.** Rejected evidence is kept as history but never used in generated CVs."
@@ -149,7 +151,7 @@ def render() -> None:
             jobs = count_jobs(session)
         st.markdown(c.kv("Jobs in database", str(jobs))
                     + c.kv("App version", "1.0.0")
-                    + c.kv("Stack", "Streamlit · SQLite · Gemini"), unsafe_allow_html=True)
+                    + c.kv("Stack", "Streamlit · SQLite · Groq + Gemini"), unsafe_allow_html=True)
     with col2:
         if st.button("Open Search Diagnostics", use_container_width=True):
             go("diagnostics")
