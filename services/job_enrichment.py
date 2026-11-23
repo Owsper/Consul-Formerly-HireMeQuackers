@@ -291,7 +291,7 @@ def extract_languages(description: str) -> list[str]:
     pattern = re.compile(
         r"(" + _QUALIFIER_RE + r"\s+)?"
         r"(" + "|".join(re.escape(k) for k in LANGUAGE_NAMES) + r")"
-        r"\s*(?:language|kenntnisse|knowledge|skills)?\s*(?:auf\s+)?[\(\-–:]?\s*"
+        r"(?:\s*(?:language|kenntnisse|knowledge|skills))?(?!\w)\s*(?:auf\s+)?[\(\-–:]?\s*"
         r"(fluent|native|business|professional|basic|intermediate|advanced|b2|c1|c2|a2|b1|mother tongue|muttersprache)?",
         re.I,
     )
