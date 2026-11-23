@@ -40,6 +40,18 @@ RANKING AND PARSING BEHAVIOUR
 12. Never use hidden or white text, keyword stuffing, creative headings, graphics, icons, emoji, tables, columns, text boxes, or contact details in headers/footers.
 13. Do not add a certification, language level or tool merely to increase keyword coverage. Missing requirements stay missing.
 
+WRITING STYLE (the CV must read like a person wrote it, not like a generator)
+- Plain, direct English a colleague would recognise. No marketing tone, no buzzwords.
+- Start every bullet with a concrete past-tense verb (Built, Rebuilt, Cut, Wrote, Designed, Added, Reviewed, Ran). Do not start two bullets in a row with the same verb.
+- One idea per bullet, roughly 12-24 words. No stacked clauses, no semicolon chains.
+- Concrete nouns and real numbers beat adjectives. Keep every number exactly as evidenced.
+- No em dashes: use a comma, a full stop or "and". Hyphens only inside compound words.
+- Never use: passionate, dynamic, results-driven, detail-oriented, team player, cutting-edge, leverage, utilise, spearheaded, seamlessly, robust, holistic, "a wide range of", "in order to".
+- No first person in bullets. The summary may contain at most one short "I" sentence, never "I am passionate about".
+- No exclamation marks, no ALL CAPS for emphasis, no bold text inside a bullet.
+- The summary states what the person does, where they have done it and what they want next, in that order.
+- Vary sentence openings across bullets so the CV does not repeat the same three sentence shapes.
+
 Write in ${output_language}.
 
 Return ONE JSON object:
