@@ -40,8 +40,14 @@ def next_version(session: Session, job_id: str) -> int:
 
 def generate_cv_for_job(session: Session, job_id: str, *, use_llm: bool = True,
                         language: str | None = None, template_path: str | None = None,
-                        formats: tuple[str, ...] = ("docx", "pdf", "txt")) -> tuple[
+                        formats: tuple[str, ...] = ()) -> tuple[
                             TailoredCVRow, TailoredCV, ValidationReport]:
+    """Draft, validate and persist one CV version.
+
+    Nothing is exported by default: generation produces the document content and
+    the validation report only. The preview is rendered on first view and the
+    DOCX/PDF are handed to the user only when they ask for them.
+    """
     job_row = session.get(Job, job_id)
     if job_row is None:
         raise JobNotFoundError("That job no longer exists.")
@@ -60,11 +66,15 @@ def generate_cv_for_job(session: Session, job_id: str, *, use_llm: bool = True,
                            use_llm=use_llm, language=language or job.language or "en")
 
     version = next_version(session, job_id)
-    settings = get_settings()
-    settings.ensure_dirs()
-    files = export_cv(cv, out_dir=settings.exports_dir, version=version,
-                      formats=formats, template_path=template_path)
-    _attach_layout_report(report, files)
+    files: dict[str, str] = {}
+    if formats and report.passed:
+        # An incomplete or unsupported CV is never written to disk: there is no
+        # file to hand out until it passes every check.
+        settings = get_settings()
+        settings.ensure_dirs()
+        files = export_cv(cv, out_dir=settings.exports_dir, version=version,
+                          formats=formats, template_path=template_path)
+        _attach_layout_report(report, files)
     _attach_document_audit(report, files, cv, job, payload.evidence, payload.data)
 
     row = TailoredCVRow(
@@ -112,6 +122,42 @@ def list_versions(session: Session, job_id: str) -> list[TailoredCVRow]:
 
 def get_version(session: Session, cv_id: int) -> TailoredCVRow | None:
     return session.get(TailoredCVRow, cv_id)
+
+
+def ensure_preview(session: Session, cv_id: int, *,
+                   template_path: str | None = None) -> dict[str, str]:
+    """Render the preview document for a version the first time it is viewed.
+
+    Generation no longer writes files. The preview needs a rendered DOCX/PDF, so
+    it is produced when the version is displayed, never at generation time.
+    """
+    row = get_version(session, cv_id)
+    if row is None:
+        raise JobNotFoundError("That CV version does not exist.")
+    existing = {fmt: path for fmt, path in
+                (("docx", row.docx_path), ("pdf", row.pdf_path))
+                if path and Path(path).exists()}
+    if "pdf" in existing:
+        return existing
+
+    cv, report = load_cv(row)
+    settings = get_settings()
+    settings.ensure_dirs()
+    files = export_cv(cv, out_dir=settings.exports_dir, version=row.version,
+                      formats=("docx", "pdf"), template_path=template_path)
+    row.docx_path = files.get("docx", row.docx_path or "")
+    row.pdf_path = files.get("pdf", row.pdf_path or "")
+    _attach_layout_report(report, files)
+
+    job_row = session.get(Job, row.job_id)
+    profile_row = get_profile(session, row.profile_id) if row.profile_id else None
+    if job_row is not None and profile_row is not None:
+        payload = profile_to_payload(profile_row)
+        _attach_document_audit(report, files, cv, row_to_record(job_row),
+                              payload.evidence, payload.data)
+    row.validation_json = report.model_dump_json()
+    session.flush()
+    return files
 
 
 def reexport(session: Session, cv_id: int, *, formats: tuple[str, ...] = ("docx", "pdf"),
