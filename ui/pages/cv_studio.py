@@ -18,8 +18,8 @@ from services.application_documents import (
 )
 from services.application_service import ensure_application, update_application
 from services.cv_service import (
-    approve_cv, ensure_document_audit, generate_cv_for_job, get_version, is_cv_approved,
-    list_versions, load_cv, reexport, revoke_cv_approval,
+    approve_cv, ensure_document_audit, ensure_preview, generate_cv_for_job, get_version,
+    is_cv_approved, list_versions, load_cv, reexport, revoke_cv_approval,
 )
 from services.cv_tailoring import audit_cv_with_llm
 from services.document_export import export_cover_letter_docx, pdf_render_source
@@ -152,18 +152,18 @@ def _render_cv_tab(job: dict) -> None:
         use_llm = st.checkbox("Use AI drafting", value=settings.llm_available,
                               disabled=not settings.llm_available, key="cv_use_llm",
                               help="Without an LLM, the deterministic evidence-only builder is used.")
-        formats = st.multiselect("Export formats", ["docx", "pdf", "txt"], default=["docx", "pdf"],
-                                 key="cv_formats")
         st.caption(f"Master template: **{MASTER_FILENAME}** — reconstructed from "
                    "Rohan_Thomas_Vinu_CV.pdf. Typography, margins and section rules are fixed.")
+        st.caption("Generation only drafts and checks the CV. A preview is shown when every "
+                   "required part is present; DOCX and PDF are produced only when you ask "
+                   "for them.")
 
     if st.button("Generate tailored CV", type="primary"):
-        with st.spinner("Selecting evidence, drafting, validating and exporting…"):
+        with st.spinner("Selecting evidence, drafting and checking every CV section…"):
             try:
                 with session_scope() as session:
                     row, _, report = generate_cv_for_job(
                         session, job["id"], use_llm=use_llm, language=language,
-                        formats=tuple(formats or ["docx", "pdf"]),
                     )
             except consulError as exc:
                 st.error(exc.message)
@@ -172,10 +172,11 @@ def _render_cv_tab(job: dict) -> None:
                 st.error(f"CV generation failed: {type(exc).__name__}: {exc}")
                 return
         if report.passed:
-            st.success(f"CV v{row.version} generated and passed validation.")
+            st.success(f"CV v{row.version} is complete and passed every check. "
+                       "Preview it below.")
         else:
-            st.warning(f"CV v{row.version} generated, but validation found blocking issues. "
-                       "Review the report before exporting.")
+            st.warning(f"CV v{row.version} is incomplete or unsupported, so it is withheld. "
+                       "Nothing was exported — fix the issues shown for this version.")
         st.rerun()
 
     st.markdown('<div class="consul-divider"></div>', unsafe_allow_html=True)
@@ -210,20 +211,50 @@ def _render_versions(job_id: str) -> None:
         if row is None:
             return
         cv, report = load_cv(row)
-        paths = {"docx": row.docx_path, "pdf": row.pdf_path, "version": row.version}
         validation = report
         template_name = row.template_name
         approved = is_cv_approved(session, chosen)
+        if report.passed:
+            # Render the preview on first view only; nothing is produced at
+            # generation time and no file is handed out without a click.
+            try:
+                paths = ensure_preview(session, chosen)
+            except Exception as exc:  # a preview failure must not break the page
+                st.warning(f"The document preview could not be rendered: "
+                           f"{type(exc).__name__}: {exc}")
+                paths = {}
+        else:
+            paths = {"docx": row.docx_path, "pdf": row.pdf_path}
+        session.commit()
+
+    if not validation.passed:
+        st.error("This version is not sendable: the CV is missing required content or "
+                 "contains unsupported claims, so it is not shown or downloadable.")
+        st.markdown(
+            c.badge("Needs attention", "danger")
+            + " " + c.badge(f"Evidence coverage {validation.evidence_coverage:.0%}", "brand"),
+            unsafe_allow_html=True,
+        )
+        for issue in validation.issues:
+            tone = "error" if issue.severity == "error" else ""
+            st.markdown(f'<div class="consul-flag {tone}"><b>{c.esc(issue.code)}</b> — '
+                        f'{c.esc(issue.message)}</div>', unsafe_allow_html=True)
+        st.caption("Fix the errors above and generate a new version. Each generation "
+                   "creates a separate version and never overwrites the Ground Truth.")
+        st.caption(f"Template: {template_name or 'builtin'} · "
+                   "Ground Truth is never modified by CV generation.")
+        return
 
     st.markdown("##### Document preview")
-    pdf_path = Path(paths["pdf"]) if paths["pdf"] else None
+    pdf_path = Path(paths["pdf"]) if paths.get("pdf") else None
     previewed = False
     if pdf_path and pdf_path.exists():
         source = pdf_render_source(pdf_path)
         previewed = show_pdf_preview(
             pdf_path,
             caption=(
-                "Rendered from the DOCX with LibreOffice. This is the file you download."
+                "Preview only. The DOCX and PDF are produced when you press a "
+                "download button after approving this version."
                 if source == "docx_conversion"
                 else "Rendered with the built-in measured renderer (LibreOffice is not "
                      "installed); geometry matches the master template."
@@ -337,7 +368,7 @@ def _render_versions(job_id: str) -> None:
                 st.caption("Approval is blocked while validation or layout checks report errors.")
         else:
             st.success("Approved for download.")
-            for fmt, path in (("docx", paths["docx"]), ("pdf", paths["pdf"])):
+            for fmt, path in (("docx", paths.get("docx")), ("pdf", paths.get("pdf"))):
                 if path and Path(path).exists():
                     st.download_button(
                         f"Download {fmt.upper()}", Path(path).read_bytes(),
