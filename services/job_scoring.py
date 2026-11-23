@@ -351,7 +351,9 @@ def _location_dimension(inputs: ScoringInputs) -> DimensionScore:
     if job.work_mode.value == "remote" and (not modes or "remote" in modes):
         return DimensionScore(name="location_preferences", weight=0, score=100.0,
                               rationale="Remote role and remote work is enabled in preferences.")
-    job_country = normalize_text(job.country or job.location)
+    # Feeds give either an ISO code ("DE") or a country name, and often only the
+    # latter inside the location string. Read both so "DE" is not treated as foreign.
+    job_country = normalize_text(" ".join(filter(None, [job.country, job.location])))
     if prefs.countries:
         if any(normalize_text(c) in job_country or job_country in normalize_text(c)
                for c in prefs.countries if c):
@@ -405,7 +407,9 @@ def _language_dimension(inputs: ScoringInputs) -> tuple[DimensionScore, list[str
 def _work_auth_dimension(inputs: ScoringInputs) -> tuple[DimensionScore, list[str], EligiblityStatus | None]:
     auth = inputs.profile.work_authorization
     job = inputs.job
-    job_country = normalize_text(job.country or job.location)
+    # Feeds give either an ISO code ("DE") or a country name, and often only the
+    # latter inside the location string. Read both so "DE" is not treated as foreign.
+    job_country = normalize_text(" ".join(filter(None, [job.country, job.location])))
     residence = normalize_text(auth.residence_country)
     concerns: list[str] = []
 
