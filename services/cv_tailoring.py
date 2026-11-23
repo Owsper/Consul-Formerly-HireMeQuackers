@@ -29,8 +29,8 @@ from core.schemas import (
     JobRecord, MatchResult, TailoredCV, ValidationIssue, ValidationReport,
 )
 from core.text import (
-    canonical_skill, filename_stem, keyword_set, normalize_text, normalize_whitespace,
-    text_contains_skill,
+    canonical_skill, filename_stem, humanise_text, keyword_set, normalize_text,
+    normalize_whitespace, text_contains_skill,
 )
 
 logger = get_logger("cv")
@@ -543,6 +543,9 @@ def sanitize_cv(cv: TailoredCV, profile: CandidateProfileData,
             removed.append(f"Removed section '{heading}' (not requested by this job).")
             continue
         section.heading = _clean_text(heading) or section.heading
+        if section.summary:
+            section.summary = _clean_text(section.summary)
+        section.lines = [cleaned for cleaned in map(_clean_text, section.lines) if cleaned]
         entries: list[CVEntry] = []
         for entry in section.entries:
             bullets: list[CVBullet] = []
@@ -572,7 +575,7 @@ def sanitize_cv(cv: TailoredCV, profile: CandidateProfileData,
                          if _skill_is_supported(s, allowed_skill_text, learning_skills)]
             for dropped in [s for s in section.skills if s not in supported]:
                 removed.append(f"Removed unsupported skill '{dropped}'.")
-            section.skills = supported
+            section.skills = [_clean_text(skill) for skill in supported]
             kept_rows: list[CVRow] = []
             for row in section.rows:
                 values = [value.strip() for value in (row.text or "").split(",") if value.strip()]
@@ -581,7 +584,10 @@ def sanitize_cv(cv: TailoredCV, profile: CandidateProfileData,
                 for dropped in [value for value in values if value not in kept]:
                     removed.append(f"Removed unsupported skill '{dropped}'.")
                 if kept:
-                    kept_rows.append(row.model_copy(update={"text": ", ".join(kept)}))
+                    kept_rows.append(row.model_copy(update={
+                        "label": _clean_text(row.label),
+                        "text": _clean_text(", ".join(kept)),
+                    }))
             section.rows = kept_rows
             if not section.skills and not section.rows:
                 continue
@@ -604,7 +610,7 @@ def _clean_text(text: str) -> str:
         return ""
     text = re.sub(r"[\U0001F300-\U0001FAFF\u2600-\u27BF]", "", text)
     text = text.replace("\t", " ").replace("\u00a0", " ")
-    return normalize_whitespace(text)
+    return humanise_text(text)
 
 
 def _cv_includes_profile_project(cv: TailoredCV,
