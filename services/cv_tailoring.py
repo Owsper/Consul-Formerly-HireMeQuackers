@@ -142,14 +142,21 @@ def _bullet_score(text: str, job: JobRecord, terms: set[str]) -> float:
 
 
 def _project_must_terms(job: JobRecord) -> list[str]:
-    """Requirements a project must satisfy to be worth showing for this job.
+    """Technical requirements a project must satisfy to be worth showing.
 
-    Languages are included because ``job_terms`` already treats them as
-    must-haves. Preferred skills deliberately do not qualify a project: they
-    only affect ordering, so an adjacent technology such as REST APIs cannot
-    pull an unrelated project into a specialised frontend CV.
+    Spoken languages are excluded: ``job_terms`` counts them as must-haves for
+    keyword coverage, but "English (C1)" says nothing about whether a project
+    is relevant, and no project can reasonably be required to mention it.
+    Preferred skills deliberately do not qualify a project either: they only
+    affect ordering, so an adjacent technology such as REST APIs cannot pull an
+    unrelated project into a specialised frontend CV.
     """
-    return list(job_terms(job).must_have)
+    language_terms = {
+        canonical_skill(re.split(r"[\(\[]", str(value or ""), maxsplit=1)[0])
+        for value in job.languages
+    }
+    return [term for term in job_terms(job).must_have
+            if canonical_skill(term) not in language_terms]
 
 
 def _project_relevance(project: Any, job: JobRecord, terms: set[str]) -> tuple[float, bool]:
@@ -242,30 +249,6 @@ def build_rule_based_cv(profile: CandidateProfileData, evidence: list[EvidenceIt
                           if any(text_contains_skill(s, r) or text_contains_skill(r, s)
                                  for r in job.required_skills)]
     focus_terms = matched_skills[:5] or demonstrated[:4]
-    focus = _join_list(focus_terms, language) or (
-        "software delivery" if language == "en" else "Softwareentwicklung"
-    )
-    years = _years_of_experience(profile)
-    has_projects = bool(profile.projects or any(e.academic_projects for e in profile.education))
-    if years:
-        years_text = (f"{years}+ year{'s' if years != 1 else ''} of professional experience"
-                      if language == "en" else f"{years}+ Jahre Berufserfahrung")
-    elif has_projects:
-        years_text = ("hands-on project experience" if language == "en"
-                      else "praktische Projekterfahrung")
-    else:
-        # Never claim professional or project experience that is not recorded.
-        years_text = {"en": "an early-career background", "de": "einen Berufseinstieg",
-                      "fr": "un profil débutant", "es": "un perfil junior",
-                      "nl": "een startersprofiel"}.get(language, "an early-career background")
-    template = SUMMARY_TEMPLATES.get(language, SUMMARY_TEMPLATES["en"])
-    summary = template.format(
-        title=header.title or ("Professional" if language == "en" else "Fachkraft"),
-        years=years_text,
-        focus=focus,
-        job_title=job.title,
-        company=job.company or ("your team" if language == "en" else "Ihr Team"),
-    )
 
     sections: list[CVSection] = []
 
@@ -296,17 +279,56 @@ def build_rule_based_cv(profile: CandidateProfileData, evidence: list[EvidenceIt
             sections.append(CVSection(heading=_heading("Professional Experience", language),
                                       kind="entries", entries=entries))
 
-    project_sections = _project_sections(profile, evidence, job, terms, language)
+    # A student CV rests entirely on projects. With no employment to fall back
+    # on, the project gate must never leave the document without experience
+    # content, so the strongest verified project(s) are kept instead.
+    project_sections = _project_sections(profile, evidence, job, terms, language,
+                                         allow_fallback=not profile.employment)
     sections.extend(project_sections)
+
+    focus = _join_list(focus_terms, language) or (
+        "software delivery" if language == "en" else "Softwareentwicklung"
+    )
+    years = _years_of_experience(profile)
+    # Only claim project experience when a project section actually made it into
+    # the document; otherwise the summary describes work the CV does not show.
+    if years:
+        years_text = (f"{years}+ year{'s' if years != 1 else ''} of professional experience"
+                      if language == "en" else f"{years}+ Jahre Berufserfahrung")
+    elif project_sections:
+        years_text = ("hands-on project experience" if language == "en"
+                      else "praktische Projekterfahrung")
+    else:
+        # Never claim professional or project experience that is not recorded.
+        years_text = {"en": "an early-career background", "de": "einen Berufseinstieg",
+                      "fr": "un profil débutant", "es": "un perfil junior",
+                      "nl": "een startersprofiel"}.get(language, "an early-career background")
+    education_title = ""
+    if profile.education:
+        first_education = profile.education[0]
+        education_title = " ".join(
+            x for x in (first_education.qualification or first_education.degree,
+                        first_education.subject) if x
+        ).strip()
+    template = SUMMARY_TEMPLATES.get(language, SUMMARY_TEMPLATES["en"])
+    summary = template.format(
+        title=(header.title or education_title
+               or ("Professional" if language == "en" else "Fachkraft")),
+        years=years_text,
+        focus=focus,
+        job_title=job.title,
+        company=job.company or ("your team" if language == "en" else "Ihr Team"),
+    )
 
     if profile.education:
         entries = []
         for i, edu in enumerate(profile.education):
             headline = " ".join(x for x in (edu.qualification or edu.degree, edu.subject) if x)
-            focus = [item for item in edu.achievements
-                     if item.strip().lower().startswith(("focus:", "focus ", "schwerpunkt"))]
+            focus_bullets = [item for item in edu.achievements
+                             if item.strip().lower().startswith(
+                                 ("focus:", "focus ", "schwerpunkt"))]
             bullets: list[CVBullet] = []
-            remainder = [item for item in edu.achievements if item not in focus]
+            remainder = [item for item in edu.achievements if item not in focus_bullets]
             for j, item in enumerate([*remainder, *edu.academic_projects][:4]):
                 path = (f"education[{i}].achievements[{j}]" if j < len(remainder)
                         else f"education[{i}].academic_projects[{j - len(remainder)}]")
@@ -315,7 +337,7 @@ def build_rule_based_cv(profile: CandidateProfileData, evidence: list[EvidenceIt
             entries.append(CVEntry(
                 title=headline or edu.institution, organization=edu.institution if headline else "",
                 location="", dates=_dates(edu.start_date, edu.end_date, False, language),
-                technologies=focus,
+                technologies=focus_bullets,
                 bullets=bullets,
             ))
         sections.append(CVSection(heading=_heading("Education", language),
@@ -351,9 +373,10 @@ def build_rule_based_cv(profile: CandidateProfileData, evidence: list[EvidenceIt
 
 
 def _project_sections(profile: CandidateProfileData, evidence: list[EvidenceItem],
-                      job: JobRecord, terms: set[str], language: str) -> list[CVSection]:
-    professional: list[CVEntry] = []
-    academic: list[CVEntry] = []
+                      job: JobRecord, terms: set[str], language: str, *,
+                      allow_fallback: bool = True) -> list[CVSection]:
+    must_terms = _project_must_terms(job)
+    candidates: list[tuple[float, bool, bool, CVEntry]] = []
     for i, project in enumerate(profile.projects):
         texts = [project.description, project.implementation, project.measurable_results,
                  *project.verified_achievements]
@@ -366,15 +389,6 @@ def _project_sections(profile: CandidateProfileData, evidence: list[EvidenceItem
             for j, a in enumerate(project.verified_achievements)
         ]
         relevance, must_match = _project_relevance(project, job, terms)
-        must_terms = _project_must_terms(job)
-        if must_terms:
-            # Matching one must-have requirement is enough. A project does not
-            # have to satisfy every requirement in the advert.
-            if not must_match:
-                continue
-        elif relevance < 3:
-            # No structured must-haves at all: fall back to the text score.
-            continue
         bullets = _pick_bullets(texts, ids, job, terms, limit=4)
         if not bullets:
             continue
@@ -384,7 +398,30 @@ def _project_sections(profile: CandidateProfileData, evidence: list[EvidenceItem
             technologies=list(project.technologies),
             bullets=bullets,
         )
-        (academic if project.label == "academic_project" else professional).append(entry)
+        candidates.append((relevance, must_match, project.label == "academic_project", entry))
+
+    def qualifies(candidate: tuple[float, bool, bool, CVEntry]) -> bool:
+        relevance, must_match, _, _ = candidate
+        if must_terms:
+            # Matching one must-have requirement is enough. A project does not
+            # have to satisfy every requirement in the advert.
+            return must_match
+        # No structured must-haves at all: fall back to the text score.
+        return relevance >= 3
+
+    selected = [candidate for candidate in candidates if qualifies(candidate)]
+    if not selected and allow_fallback and candidates:
+        # The candidate has no employment, so projects are the only evidence of
+        # hands-on work. Keep the strongest ones that share at least one term
+        # with the job instead of exporting a CV with no experience at all.
+        selected = [candidate for candidate in
+                    sorted(candidates, key=lambda item: -item[0])
+                    if candidate[0] > 0][:2]
+
+    professional: list[CVEntry] = []
+    academic: list[CVEntry] = []
+    for _, _, is_academic, entry in selected:
+        (academic if is_academic else professional).append(entry)
 
     sections: list[CVSection] = []
     if professional:
@@ -582,6 +619,101 @@ def _cv_includes_profile_project(cv: TailoredCV,
     return False
 
 
+def _cv_full_text(cv: TailoredCV) -> str:
+    """Every string the document actually shows, normalised for matching."""
+    parts: list[str] = [
+        cv.header.name, cv.header.title, *cv.header.contact_lines,
+        cv.header.visa_status, cv.header.applying_for, cv.summary,
+        cv.target_job_title, cv.target_company,
+    ]
+    for section in cv.sections:
+        parts.extend([section.heading, section.summary, *section.skills, *section.lines])
+        parts.extend(f"{row.label} {row.text}" for row in section.rows)
+        for entry in section.entries:
+            parts.extend([entry.title, entry.organization, entry.location, entry.dates,
+                          *entry.technologies])
+            parts.extend(bullet.text for bullet in entry.bullets)
+    return normalize_text(" ".join(part for part in parts if part))
+
+
+def _completeness_issues(cv: TailoredCV,
+                         profile: CandidateProfileData) -> list[ValidationIssue]:
+    """The parts a sendable CV must contain.
+
+    These are errors, not warnings: a document missing personal details, skills,
+    experience or the candidate's recorded additional information is not handed
+    out at all. Everything checked here comes from the Ground Truth, so a gap
+    means the generation dropped content or the profile is not ready yet.
+    """
+    issues: list[ValidationIssue] = []
+    text = _cv_full_text(cv)
+
+    contacts = [value for value in (profile.personal.email, profile.personal.phone) if value]
+    if not cv.header.name.strip():
+        issues.append(ValidationIssue(
+            severity="error", code="missing_personal_info",
+            message="The CV has no name in the header.",
+        ))
+    elif not contacts:
+        issues.append(ValidationIssue(
+            severity="error", code="missing_personal_info",
+            message="Ground Truth has no email address or phone number, so the CV has no "
+                    "contact details. Add them to the profile and regenerate.",
+        ))
+    elif not any(normalize_text(value) in text for value in contacts):
+        issues.append(ValidationIssue(
+            severity="error", code="missing_personal_info",
+            message="The generated header dropped the recorded contact details.",
+        ))
+
+    if not any(section.kind == "skills" and (section.skills or section.rows or section.lines)
+               for section in cv.sections):
+        issues.append(ValidationIssue(
+            severity="error", code="missing_skills",
+            message="The CV has no skills section. Add verified skills to the Ground Truth "
+                    "profile and regenerate.",
+        ))
+
+    education_names = {normalize_text(entry.institution) for entry in profile.education
+                       if entry.institution}
+    work_entries = [entry for section in cv.sections for entry in section.entries
+                    if entry.bullets and normalize_text(entry.organization) not in education_names]
+    if (profile.employment or profile.projects) and not work_entries:
+        issues.append(ValidationIssue(
+            severity="error", code="missing_experience",
+            message="The CV has no experience or project entry with evidence-cited bullets, "
+                    "so it shows no work at all.",
+        ))
+
+    missing_education = [entry.institution or entry.qualification for entry in profile.education
+                         if (entry.institution or entry.qualification)
+                         and normalize_text(entry.institution or entry.qualification) not in text]
+    if missing_education:
+        issues.append(ValidationIssue(
+            severity="error", code="missing_education",
+            message=("The CV is missing education recorded in the Ground Truth: "
+                     + ", ".join(missing_education[:3]) + "."),
+        ))
+
+    missing_additional = [
+        item.language for item in profile.additional.languages
+        if item.language and normalize_text(item.language) not in text
+    ] + [
+        item.name for item in profile.additional.certifications
+        if item.name and normalize_text(item.name) not in text
+    ] + [
+        item.name for item in profile.additional.awards
+        if item.name and normalize_text(item.name) not in text
+    ]
+    if missing_additional:
+        issues.append(ValidationIssue(
+            severity="error", code="missing_additional_info",
+            message=("The CV is missing additional information recorded in the Ground Truth: "
+                     + ", ".join(missing_additional[:5]) + "."),
+        ))
+    return issues
+
+
 def validate_cv(cv: TailoredCV, profile: CandidateProfileData,
                 evidence: list[EvidenceItem], job: JobRecord,
                 *, removed_content: list[str] | None = None) -> ValidationReport:
@@ -666,12 +798,19 @@ def validate_cv(cv: TailoredCV, profile: CandidateProfileData,
                      "Regenerate with the deterministic builder and review the result."),
         ))
     if profile.projects and not _cv_includes_profile_project(cv, profile):
+        # With no employment, projects are the only possible experience content;
+        # a CV that dropped all of them is not sendable.
         issues.append(ValidationIssue(
-            severity="warning", code="no_relevant_projects",
-            message=("No verified project matched this job's must-have requirements, so the "
+            severity="error" if not profile.employment else "warning",
+            code="no_relevant_projects",
+            message=("No verified project matched this job's requirements, so the "
                      "CV has no Project Experience section. Add a relevant project or review "
                      "the target role."),
         ))
+
+    # A CV is only sendable when every part of it is there. Missing parts are
+    # errors so the document is never presented or handed out incomplete.
+    issues.extend(_completeness_issues(cv, profile))
 
     # Contact details
     if not profile.personal.email:
