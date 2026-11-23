@@ -272,6 +272,33 @@ def test_german_language_requirements_keep_their_level(text, language):
     assert language in extract_languages(text)
 
 
+def test_place_names_are_not_language_requirements():
+    from services.job_enrichment import extract_languages
+
+    assert "German" not in extract_languages("Location: Berlin, Germany.")
+    assert "German" not in extract_languages(
+        "#Workingstudent #Werkstudent #Germany #Deutschland #SAPGermanStudentsCareers"
+    )
+    assert any(e.startswith("English") for e in extract_languages(
+        "(Very) good English language skills"))
+
+
+def test_iso_country_code_still_counts_as_the_candidates_country():
+    from core.schemas import CandidateProfileData, EligiblityStatus, JobRecord, SearchPreferences
+    from services.job_scoring import score_record
+
+    job = JobRecord(source="sap", title="Working Student (w/m/d) - SAP HANA Cloud Infrastructure",
+                    company="SAP", country="DE", location="Berlin, DE; Berlin, Germany",
+                    employment_type="working_student", description="Python, Docker, Kubernetes")
+    profile = CandidateProfileData.model_validate({
+        "work_authorization": {"residence_country": "Germany", "authorized_to_work": True},
+    })
+    prefs = SearchPreferences(countries=["Germany"], employment_types=["working_student"])
+    match = score_record(job, profile, [], prefs)
+    assert match.eligibility.status is not EligiblityStatus.UNCLEAR
+    assert not any("Cross-border" in concern for concern in match.eligibility.concerns)
+
+
 def test_very_good_german_is_not_satisfied_by_b1():
     from core.schemas import CandidateProfileData, JobRecord, SearchPreferences
     from services.job_enrichment import enrich_job
