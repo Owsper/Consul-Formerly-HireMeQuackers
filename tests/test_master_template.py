@@ -6,8 +6,10 @@ import pytest
 
 from core.schemas import JobRecord
 from services.application_service import create_application
+from config import get_settings
 from services.cv_service import (
-    approve_cv, generate_cv_for_job, is_cv_approved, load_cv, revoke_cv_approval,
+    approve_cv, ensure_preview, generate_cv_for_job, is_cv_approved, load_cv,
+    revoke_cv_approval,
 )
 from services.cv_tailoring import tailor_cv
 from services.deduplication import persist_job
@@ -124,6 +126,25 @@ def test_approval_gate_on_a_generated_version(session, approved_profile, profile
     assert is_cv_approved(session, cv_row.id) is True
     revoke_cv_approval(session, cv_row.id)
     assert is_cv_approved(session, cv_row.id) is False
+
+
+def test_generation_exports_nothing_until_the_preview_is_viewed(
+        session, approved_profile, job_record):
+    """Generation drafts and validates; files exist only once a version is shown."""
+    row, _ = persist_job(session, job_record)
+    cv_row, _cv, report = generate_cv_for_job(session, row.id, use_llm=False)
+
+    assert report.passed is True
+    assert cv_row.docx_path == "" and cv_row.pdf_path == ""
+    exports = Path(get_settings().exports_dir)
+    assert not list(exports.glob("*.pdf")) if exports.exists() else True
+
+    files = ensure_preview(session, cv_row.id)
+    assert Path(files["pdf"]).exists() and Path(files["docx"]).exists()
+
+    # Viewing the same version again must not re-render it.
+    again = ensure_preview(session, cv_row.id)
+    assert again["pdf"] == files["pdf"]
 
 
 def test_cv_generation_does_not_touch_ground_truth(session, approved_profile,
