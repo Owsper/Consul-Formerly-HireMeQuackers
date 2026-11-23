@@ -596,8 +596,11 @@ def cv_to_text(cv: TailoredCV) -> str:
         lines.extend(section.lines)
         for entry in section.entries:
             title = " – ".join(x for x in (entry.title, entry.organization) if x)
-            details = " | ".join(x for x in (entry.dates, entry.location) if x)
-            lines.append(f"{entry.dates}\t{title}" + (f"  ({details})" if details else ""))
+            # Dates already lead the line; repeating them in the details would
+            # print the same range twice in the exported text.
+            details = entry.location.strip()
+            prefix = f"{entry.dates}\t" if entry.dates else ""
+            lines.append(f"{prefix}{title}" + (f"  ({details})" if details else ""))
             if entry.technologies:
                 lines.append(", ".join(entry.technologies))
             lines.extend(f"- {bullet.text}" for bullet in entry.bullets)
