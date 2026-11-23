@@ -49,6 +49,79 @@ def normalize_whitespace(text: str) -> str:
     return _WS_RE.sub(" ", text or "").strip()
 
 
+# Prose clean-up applied to every generated CV before it is written out. Word
+# swaps only where the plain word stays grammatical and keeps the meaning.
+_HUMAN_WORD_SWAPS = {
+    "utilise": "use", "utilises": "uses", "utilised": "used", "utilising": "using",
+    "utilize": "use", "utilizes": "uses", "utilized": "used", "utilizing": "using",
+    "leverage": "use", "leverages": "uses", "leveraged": "used", "leveraging": "using",
+    "spearheaded": "led", "spearheads": "leads", "spearheading": "leading",
+    "passionate about": "interested in",
+    "cutting-edge": "modern",
+    "seamlessly": "cleanly",
+}
+_HUMAN_PHRASE_SWAPS = {
+    "in order to": "to",
+    "prior to": "before",
+    "due to the fact that": "because",
+    "at this point in time": "now",
+    "on a daily basis": "daily",
+    "in a timely manner": "on time",
+    "make use of": "use",
+    "a wide range of": "many",
+    "a variety of": "several",
+}
+_HUMAN_SWAP_RE = re.compile(
+    r"\b(" + "|".join(
+        re.escape(term) for term in
+        sorted({*_HUMAN_WORD_SWAPS, *_HUMAN_PHRASE_SWAPS}, key=len, reverse=True)
+    ) + r")\b",
+    re.IGNORECASE,
+)
+_HUMAN_SWAPS = {**_HUMAN_WORD_SWAPS, **_HUMAN_PHRASE_SWAPS}
+
+# Adjectives that carry no information; dropped together with their article.
+_HUMAN_FILLER_RE = re.compile(
+    r"\b(a|an|the)\s+(?:passionate|dynamic|results-driven|detail-oriented|highly motivated)\b"
+    r"(?:\s*[,;])?\s*",
+    re.IGNORECASE,
+)
+
+
+def _match_case(replacement: str, original: str) -> str:
+    if original.isupper() and len(original) > 1:
+        return replacement.upper()
+    if original[:1].isupper():
+        return replacement[:1].upper() + replacement[1:]
+    return replacement
+
+
+def humanise_text(text: str) -> str:
+    """Rewrite machine-written prose the way a person would type it.
+
+    Removes em dashes and smart quotes, turns numeric en dashes into hyphens,
+    replaces the usual CV marketing words with plain ones and tidies spacing.
+    Facts, names, dates and numbers are never changed.
+    """
+    if not text:
+        return ""
+    text = text.replace("\u2019", "'").replace("\u2018", "'")
+    text = text.replace("\u201c", '"').replace("\u201d", '"')
+    text = re.sub(r"(?<=\d)\u2013(?=\d)", "-", text)   # 2023–2025 -> 2023-2025
+    text = text.replace("\u2014", " - ").replace("\u2013", " - ")
+    text = re.sub(r"\s*-{2,}\s*", " - ", text)
+    text = _HUMAN_SWAP_RE.sub(
+        lambda m: _match_case(_HUMAN_SWAPS[m.group(0).lower()], m.group(0)), text)
+    for _ in range(3):  # "a passionate, dynamic developer" needs two passes
+        text, dropped = _HUMAN_FILLER_RE.subn(lambda m: m.group(1) + " ", text)
+        if not dropped:
+            break
+    text = re.sub(r"\s+([,.;:!?])", r"\1", text)
+    text = re.sub(r"([(\[])\s+", r"\1", text)
+    text = re.sub(r"\s+([)\]%])", r"\1", text)
+    return normalize_whitespace(text)
+
+
 def _decode_sequence(text: str) -> list[Any] | None:
     """Return a list embedded in a JSON/Python-notation string, if any."""
     if len(text) < 2 or text[0] not in "[(" or text[-1] not in ")]":
