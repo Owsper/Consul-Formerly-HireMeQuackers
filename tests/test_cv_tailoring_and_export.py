@@ -200,3 +200,108 @@ def test_project_filter_is_the_same_with_two_projects(profile_data):
 
     # A two-project profile must not bypass the relevance filter.
     assert _project_titles(cv) == []
+
+
+def test_projects_are_kept_when_the_candidate_has_no_employment(profile_data):
+    """A student CV must never lose every project just because none names a
+    must-have technology (regression: the SAP HANA UX CV shipped empty)."""
+    profile = profile_data.model_copy(deep=True)
+    profile.employment = []
+    profile.projects = [
+        ProjectEntry(name="HireMeQuackers", description="Agentic AI job discovery tool.",
+                     technologies=["Python", "Gemini API", "Streamlit"]),
+        ProjectEntry(name="Mint", description="Benchmarked OCR models on handwritten samples.",
+                     technologies=["Python", "PaddleOCR"]),
+        ProjectEntry(name="Vera", description="Desktop app for church management.",
+                     technologies=["Python", "PySide6", "FastAPI", "PostgreSQL"]),
+    ]
+    evidence = synthesize_evidence(profile)
+    job = _frontend_job(
+        required_skills=["SAP", "Figma"],
+        description="Working student for UX tooling; Python scripts welcome.",
+    )
+
+    cv, report = tailor_cv(profile, evidence, job, use_llm=False)
+
+    assert _project_titles(cv), "a student CV must not drop all projects"
+    assert report.passed is True
+    assert cv.all_bullets()
+
+
+def test_language_requirements_do_not_block_projects(profile_data):
+    profile = profile_data.model_copy(deep=True)
+    profile.employment = []
+    profile.projects = [
+        ProjectEntry(name="Vera", description="Desktop app with FastAPI.",
+                     technologies=["Python", "PySide6", "FastAPI", "REST APIs"]),
+    ]
+    evidence = synthesize_evidence(profile)
+    job = _frontend_job(
+        required_skills=[],
+        languages=["English (C1)"],
+        description="Build internal tools with Python and FastAPI.",
+    )
+
+    assert any("Vera" in title for title in _project_titles(
+        build_rule_based_cv(profile, evidence, job)))
+
+
+def test_text_export_prints_entry_dates_once():
+    cv = TailoredCV(
+        header={"name": "Ada Lovelace"},
+        sections=[CVSection(heading="Education", kind="entries", entries=[
+            CVEntry(title="BSc Software Engineering",
+                    organization="University of Europe, Potsdam",
+                    dates="09/2024 – present"),
+        ])],
+    )
+
+    text = cv_to_text(cv)
+
+    assert text.count("09/2024 – present") == 1
+    assert "University of Europe, Potsdam" in text
+
+
+def test_a_cv_without_skills_is_not_sendable(profile_data, evidence, job_record):
+    cv = build_rule_based_cv(profile_data, evidence, job_record)
+    cv.sections = [section for section in cv.sections if section.kind != "skills"]
+
+    report = validate_cv(cv, profile_data, evidence, job_record)
+
+    assert report.passed is False
+    assert any(issue.code == "missing_skills" and issue.severity == "error"
+               for issue in report.issues)
+
+
+def test_a_cv_without_contact_details_is_not_sendable(profile_data, evidence, job_record):
+    cv = build_rule_based_cv(profile_data, evidence, job_record)
+    cv.header.contact_lines = []
+
+    report = validate_cv(cv, profile_data, evidence, job_record)
+
+    assert report.passed is False
+    assert any(issue.code == "missing_personal_info" and issue.severity == "error"
+               for issue in report.issues)
+
+
+def test_a_cv_that_drops_recorded_certifications_is_not_sendable(
+        profile_data, evidence, job_record):
+    cv = build_rule_based_cv(profile_data, evidence, job_record)
+    cv.sections = [section for section in cv.sections
+                   if "certif" not in section.heading.lower()]
+
+    report = validate_cv(cv, profile_data, evidence, job_record)
+
+    assert report.passed is False
+    assert any(issue.code == "missing_additional_info" and issue.severity == "error"
+               for issue in report.issues)
+
+
+def test_a_complete_deterministic_cv_passes_every_completeness_check(
+        profile_data, evidence, job_record):
+    cv = build_rule_based_cv(profile_data, evidence, job_record)
+
+    report = validate_cv(cv, profile_data, evidence, job_record)
+
+    assert report.passed is True, [i.message for i in report.issues if i.severity == "error"]
+    assert not any(issue.code.startswith("missing_") for issue in report.issues)
