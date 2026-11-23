@@ -81,7 +81,13 @@ def test_pdf_matches_reference_geometry(profile_data, evidence, job_record, tmp_
     assert metrics["rules"] >= 3
     report = compare_layout(pdf)
     assert report["passed"] is True, [c for c in report["checks"] if not c["passed"]]
-    assert report["reference"]["column_x"] == pytest.approx(169.3, abs=1.0)
+    if report["reference"] is None:
+        # The reference CV is personal data and is not bundled with the project;
+        # verification then falls back to the template's expected geometry.
+        assert any("reference PDF unavailable" in check["detail"]
+                   for check in report["checks"])
+    else:
+        assert report["reference"]["column_x"] == pytest.approx(169.3, abs=1.0)
     source = pdf_render_source(pdf)
     assert source in {"docx_conversion", "measured_renderer"}
     if find_office_converter():
