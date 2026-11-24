@@ -116,7 +116,11 @@ def humanise_text(text: str) -> str:
         text, dropped = _HUMAN_FILLER_RE.subn(lambda m: m.group(1) + " ", text)
         if not dropped:
             break
-    text = re.sub(r"\s+([,.;:!?])", r"\1", text)
+    # Do not glue a sentence-ending full stop onto the word before it, and do
+    # not swallow the space in "GitHub, .gitignore" where the dot is part of a
+    # name rather than punctuation.
+    text = re.sub(r"\s+([,;:!?])", r"\1", text)
+    text = re.sub(r"\s+\.(?=\s|$)", ".", text)
     text = re.sub(r"([(\[])\s+", r"\1", text)
     text = re.sub(r"\s+([)\]%])", r"\1", text)
     return normalize_whitespace(text)
