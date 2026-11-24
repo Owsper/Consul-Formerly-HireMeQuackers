@@ -728,7 +728,11 @@ def validate_cv(cv: TailoredCV, profile: CandidateProfileData,
     valid_ids = {e.evidence_id for e in active}
     corpus = _evidence_corpus(active)
     corpus_norm = normalize_text(corpus)
-    numbers_in_corpus = set(re.findall(r"\d+(?:[.,]\d+)?%?", corpus.replace(",", ".")))
+    # A percent sign is often written with a space ("15.4 %") in the source and
+    # without one in the CV ("15.4%"). Normalise before comparing, otherwise a
+    # correct number is reported as an invented claim.
+    numbers_in_corpus = set(re.findall(
+        r"\d+(?:[.,]\d+)?%?", corpus.replace(" %", "%").replace(",", ".")))
 
     bullets = cv.all_bullets()
     has_career_content = bool(profile.employment or profile.projects or any(
@@ -747,7 +751,7 @@ def validate_cv(cv: TailoredCV, profile: CandidateProfileData,
             unsupported.append(bullet.text)
             continue
         # Numbers must exist in the evidence corpus (allows reordering, not invention).
-        for number in re.findall(r"\d+(?:[.,]\d+)?%?", bullet.text):
+        for number in re.findall(r"\d+(?:[.,]\d+)?%?", bullet.text.replace(" %", "%")):
             if number not in numbers_in_corpus and number.replace(".", ",") not in numbers_in_corpus:
                 unsupported.append(bullet.text)
                 break
