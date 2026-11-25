@@ -55,7 +55,7 @@ The central rule is simple:
 | **Sources** | 14 connectors: nine ATS platforms, three aggregators, web search, generic career pages |
 | **Documents** | ATS-safe DOCX, PDF and TXT generated from a fixed master template |
 | **Privacy** | Local data only, redacting logs, SSRF protection, export/backup/delete controls |
-| **Tests** | 197 tests, all HTTP mocked; suite runs in about 30–70 seconds |
+| **Tests** | 209 tests, all HTTP mocked; full suite runs in about 85 seconds |
 
 ### Design principles
 
@@ -1120,6 +1120,8 @@ python -m pytest -q
 `pytest.ini` sets `asyncio_mode = auto`, `testpaths = tests`, and ignores deprecation warnings.
 Each test gets a disposable SQLite database; all outbound HTTP is mocked with `respx`; no test
 requires an API key, network access, LibreOffice or Tesseract.
+
+Current state: **209 tests passing** (about 85 seconds on a 2023 laptop-class CPU).
 
 Coverage includes:
 
