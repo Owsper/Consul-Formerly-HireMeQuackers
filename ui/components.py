@@ -344,7 +344,7 @@ def score_breakdown(match: MatchResult) -> None:
                 st.write(f"- {concern}")
 
 
-def render_cv_html(cv: TailoredCV) -> str:
+def render_cv_html(cv: TailoredCV, *, preserve_order: bool = False) -> str:
     """Lightweight HTML preview. The PDF preview is the authoritative document."""
     from services.document_export import ordered_sections
 
@@ -359,7 +359,7 @@ def render_cv_html(cv: TailoredCV) -> str:
         parts.append(f'<div><b>Applying for:</b> {esc(cv.header.applying_for)}</div>')
     if cv.summary:
         parts.append(f"<p style='margin:.55rem 0 0;'>{esc(cv.summary)}</p>")
-    for section in ordered_sections(cv):
+    for section in ordered_sections(cv, preserve_order=preserve_order):
         parts.append(
             "<h2 style='font-size:.78rem;letter-spacing:.06em;border-bottom:1px solid #111;"
             "text-decoration:underline;text-underline-offset:3px;margin:1rem 0 .35rem;'>"
