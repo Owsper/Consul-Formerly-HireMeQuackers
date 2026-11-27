@@ -57,8 +57,15 @@ def _safe_path(path: Path) -> Path:
     return path
 
 
-def ordered_sections(cv: TailoredCV) -> list[CVSection]:
-    """Apply the master's section order (education leads for early-career CVs)."""
+def ordered_sections(cv: TailoredCV, *, preserve_order: bool = False) -> list[CVSection]:
+    """Apply the master's section order (education leads for early-career CVs).
+
+    The CV Builder deliberately keeps the order the candidate arranged, so its
+    exports pass ``preserve_order=True``; every generated CV keeps the master's
+    order.
+    """
+    if preserve_order:
+        return list(cv.sections)
     ranked: list[tuple[int, int, CVSection]] = []
     for index, section in enumerate(cv.sections):
         key = (section.heading or "").strip().lower()
@@ -126,7 +133,8 @@ def _line_count(text: str, font: str, size: float, width: float) -> int:
     return max(1, count)
 
 
-def _estimate_height(cv: TailoredCV, factor: float = 1.0) -> float:
+def _estimate_height(cv: TailoredCV, factor: float = 1.0, *,
+                     preserve_order: bool = False) -> float:
     height = NAME_SIZE_PT * 1.15
     if cv.header.contact_lines:
         height += _line_count("  |  ".join(cv.header.contact_lines), "Times-Roman",
@@ -138,7 +146,7 @@ def _estimate_height(cv: TailoredCV, factor: float = 1.0) -> float:
     if _summary_text(cv):
         height += 7 + _line_count(_summary_text(cv), "Times-Roman", BODY_SIZE_PT,
                                   CONTENT_WIDTH_PT) * CONTACT_LINE_PT
-    for section in ordered_sections(cv):
+    for section in ordered_sections(cv, preserve_order=preserve_order):
         height += SECTION_SPACE_BEFORE_PT * factor + SECTION_LINE_PT + 3.7
         rows = _rows_for(section)
         for row in rows:
@@ -162,9 +170,9 @@ def _estimate_height(cv: TailoredCV, factor: float = 1.0) -> float:
     return height
 
 
-def _spacing_factor(cv: TailoredCV) -> float:
+def _spacing_factor(cv: TailoredCV, *, preserve_order: bool = False) -> float:
     """Squeeze spacing slightly to keep a near-one-page CV on one page."""
-    estimate = _estimate_height(cv, factor=1.0)
+    estimate = _estimate_height(cv, factor=1.0, preserve_order=preserve_order)
     if estimate <= AVAILABLE_HEIGHT_PT:
         return 1.0
     factor = AVAILABLE_HEIGHT_PT / estimate
@@ -174,14 +182,15 @@ def _spacing_factor(cv: TailoredCV) -> float:
 # ---------------------------------------------------------------------------
 # DOCX: populate the master template
 # ---------------------------------------------------------------------------
-def export_docx(cv: TailoredCV, path: str | Path, *, template_path: str | None = None) -> str:
+def export_docx(cv: TailoredCV, path: str | Path, *, template_path: str | None = None,
+                preserve_order: bool = False) -> str:
     from docx.shared import Pt
 
     if template_path:
         logger.info("Reference override ignored: the master CV template is authoritative")
 
     document = new_document_from_master()
-    factor = _spacing_factor(cv)
+    factor = _spacing_factor(cv, preserve_order=preserve_order)
 
     def paragraph(style: str):
         return document.add_paragraph(style=style)
@@ -219,7 +228,7 @@ def export_docx(cv: TailoredCV, path: str | Path, *, template_path: str | None =
         summary = paragraph(STYLE_BODY)
         summary.add_run(_summary_text(cv))
 
-    for section in ordered_sections(cv):
+    for section in ordered_sections(cv, preserve_order=preserve_order):
         heading = paragraph(STYLE_SECTION)
         heading.add_run((section.heading or "").upper())
         set_spacing(heading, before=SECTION_SPACE_BEFORE_PT)
@@ -272,11 +281,13 @@ def export_docx(cv: TailoredCV, path: str | Path, *, template_path: str | None =
 # PDF: measured renderer (used when LibreOffice is unavailable)
 # ---------------------------------------------------------------------------
 class _MeasuredPDF:
-    def __init__(self, path: Path, cv: TailoredCV, factor: float = 1.0):
+    def __init__(self, path: Path, cv: TailoredCV, factor: float = 1.0,
+                 *, preserve_order: bool = False):
         from reportlab.pdfgen import canvas
 
         self.cv = cv
         self.factor = factor
+        self.preserve_order = preserve_order
         self.canvas = canvas.Canvas(
             str(path), pagesize=(PAGE_WIDTH_PT, PAGE_HEIGHT_PT),
             pageCompression=1,
@@ -513,7 +524,7 @@ class _MeasuredPDF:
 
     def build(self) -> None:
         self.header()
-        for section in ordered_sections(self.cv):
+        for section in ordered_sections(self.cv, preserve_order=self.preserve_order):
             self.section(section.heading)
             for row in _rows_for(section):
                 self.row(row)
@@ -524,8 +535,13 @@ class _MeasuredPDF:
         self.canvas.save()
 
 
-def _render_measured_pdf(cv: TailoredCV, path: Path, factor: float | None = None) -> str:
-    layout = _MeasuredPDF(path, cv, factor=factor if factor is not None else _spacing_factor(cv))
+def _render_measured_pdf(cv: TailoredCV, path: Path, factor: float | None = None, *,
+                         preserve_order: bool = False) -> str:
+    layout = _MeasuredPDF(
+        path, cv,
+        factor=factor if factor is not None else _spacing_factor(cv, preserve_order=preserve_order),
+        preserve_order=preserve_order,
+    )
     layout.build()
     PDF_SOURCES[str(path)] = "measured_renderer"
     return str(path)
@@ -544,7 +560,7 @@ def _has_text_layer(path: Path) -> bool | None:
 
 
 def export_pdf(cv: TailoredCV, path: str | Path, *, template_path: str | None = None,
-               docx_path: str | Path | None = None) -> str:
+               docx_path: str | Path | None = None, preserve_order: bool = False) -> str:
     """Convert the DOCX when possible, otherwise draw the same measured layout."""
     target = _safe_path(Path(path))
     if template_path:
@@ -555,7 +571,7 @@ def export_pdf(cv: TailoredCV, path: str | Path, *, template_path: str | None = 
         # The conversion path needs a DOCX source even when only PDF was requested.
         with tempfile.TemporaryDirectory(prefix="consul-docx-") as tmp:
             source = Path(tmp) / f"{target.stem}.docx"
-            export_docx(cv, source)
+            export_docx(cv, source, preserve_order=preserve_order)
             converted = convert_docx_to_pdf(source, target)
     else:
         converted = convert_docx_to_pdf(source, target)
@@ -564,11 +580,11 @@ def export_pdf(cv: TailoredCV, path: str | Path, *, template_path: str | None = 
         # always carry a real text layer, so fall back to the measured renderer.
         if _has_text_layer(Path(converted)) is False:
             logger.warning("Converted PDF has no text layer; using the measured renderer")
-            return _render_measured_pdf(cv, target)
+            return _render_measured_pdf(cv, target, preserve_order=preserve_order)
         PDF_SOURCES[str(target)] = "docx_conversion"
         return str(converted)
 
-    return _render_measured_pdf(cv, target)
+    return _render_measured_pdf(cv, target, preserve_order=preserve_order)
 
 
 # ---------------------------------------------------------------------------
@@ -578,7 +594,7 @@ def _escape(text: str) -> str:
     return (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def cv_to_text(cv: TailoredCV) -> str:
+def cv_to_text(cv: TailoredCV, *, preserve_order: bool = False) -> str:
     lines: list[str] = [(cv.header.name or "").upper()]
     if cv.header.contact_lines:
         lines.append("  |  ".join(cv.header.contact_lines))
@@ -589,7 +605,7 @@ def cv_to_text(cv: TailoredCV) -> str:
     lines.append("")
     if _summary_text(cv):
         lines.extend([_summary_text(cv), ""])
-    for section in ordered_sections(cv):
+    for section in ordered_sections(cv, preserve_order=preserve_order):
         lines.append(section.heading.upper())
         for row in _rows_for(section):
             lines.append(f"{row.label}\t{row.text}" if row.label else row.text)
@@ -608,9 +624,10 @@ def cv_to_text(cv: TailoredCV) -> str:
     return "\n".join(lines).strip() + "\n"
 
 
-def export_txt(cv: TailoredCV, path: str | Path) -> str:
+def export_txt(cv: TailoredCV, path: str | Path, *,
+               preserve_order: bool = False) -> str:
     path = _safe_path(Path(path))
-    path.write_text(cv_to_text(cv), encoding="utf-8")
+    path.write_text(cv_to_text(cv, preserve_order=preserve_order), encoding="utf-8")
     return str(path)
 
 
@@ -660,7 +677,8 @@ def export_cover_letter_docx(draft: CoverLetterDraft, path: str | Path, *,
 
 def export_cv(cv: TailoredCV, *, out_dir: str | Path, version: int = 1,
               formats: tuple[str, ...] = ("docx", "pdf"),
-              template_path: str | None = None) -> dict[str, str]:
+              template_path: str | None = None,
+              preserve_order: bool = False) -> dict[str, str]:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     results: dict[str, str] = {}
@@ -669,7 +687,8 @@ def export_cv(cv: TailoredCV, *, out_dir: str | Path, version: int = 1,
 
     if "docx" in requested or "pdf" in requested:
         docx_target = out_dir / filename_for(cv, "docx", version)
-        docx_path = export_docx(cv, docx_target, template_path=template_path)
+        docx_path = export_docx(cv, docx_target, template_path=template_path,
+                               preserve_order=preserve_order)
         if "docx" in requested:
             results["docx"] = docx_path
 
@@ -678,7 +697,7 @@ def export_cv(cv: TailoredCV, *, out_dir: str | Path, version: int = 1,
         target = out_dir / filename
         if fmt == "pdf":
             results["pdf"] = export_pdf(cv, target, template_path=template_path,
-                                        docx_path=docx_path)
+                                        docx_path=docx_path, preserve_order=preserve_order)
         elif fmt == "txt":
-            results["txt"] = export_txt(cv, target)
+            results["txt"] = export_txt(cv, target, preserve_order=preserve_order)
     return results
