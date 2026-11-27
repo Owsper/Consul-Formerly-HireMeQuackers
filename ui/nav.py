@@ -13,6 +13,7 @@ PAGES: list[tuple[str, str, str]] = [
     ("configuration", "Search Configuration", "Profiles, sources and scoring"),
     ("saved", "Saved Jobs", "Shortlisted opportunities"),
     ("cv_studio", "CV Studio", "Tailored, evidence-checked CVs"),
+    ("builder", "CV Builder", "Edit a CV directly, check as you go"),
     ("tracker", "Application Tracker", "Applications and follow-ups"),
     ("diagnostics", "Search Diagnostics", "What each source actually did"),
     ("settings", "Settings", "Privacy, data and preferences"),
@@ -27,6 +28,7 @@ NAV_ICONS = {
     "configuration": ":material/tune:",
     "saved": ":material/bookmark:",
     "cv_studio": ":material/edit_document:",
+    "builder": ":material/design_services:",
     "tracker": ":material/view_kanban:",
     "diagnostics": ":material/monitor_heart:",
     "settings": ":material/settings:",
@@ -35,7 +37,7 @@ NAV_ICONS = {
 NAV_GROUPS: list[tuple[str, list[str]]] = [
     ("Workspace", ["dashboard"]),
     ("Find work", ["profile", "discovery", "configuration", "saved"]),
-    ("Apply", ["cv_studio", "tracker"]),
+    ("Apply", ["cv_studio", "builder", "tracker"]),
     ("Operations", ["diagnostics", "settings"]),
 ]
 
