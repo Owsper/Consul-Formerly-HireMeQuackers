@@ -68,6 +68,8 @@ def main() -> None:
             from ui.pages import saved as view
         elif page == "cv_studio":
             from ui.pages import cv_studio as view
+        elif page == "builder":
+            from ui.pages import builder as view
         elif page == "tracker":
             from ui.pages import tracker as view
         elif page == "diagnostics":
