@@ -503,11 +503,15 @@ class MatchResult(BaseModel):
 # Tailored CV
 # ---------------------------------------------------------------------------
 class CVBullet(BaseModel):
+    # ``id`` is a stable editor handle for the CV Builder. It is not printed and
+    # carries no evidential meaning; evidence is still ``evidence_ids``.
+    id: str = ""
     text: str
     evidence_ids: list[str] = Field(default_factory=list)
 
 
 class CVEntry(BaseModel):
+    id: str = ""
     title: str = ""
     organization: str = ""
     location: str = ""
@@ -519,11 +523,13 @@ class CVEntry(BaseModel):
 class CVRow(BaseModel):
     """A two-column row: label on the left, wrapped text in the main column."""
 
+    id: str = ""
     label: str = ""
     text: str = ""
 
 
 class CVSection(BaseModel):
+    id: str = ""
     heading: str
     kind: Literal["summary", "skills", "entries", "lines"] = "entries"
     summary: str = ""
@@ -556,6 +562,26 @@ class TailoredCV(BaseModel):
             for entry in section.entries:
                 out.extend(entry.bullets)
         return out
+
+
+class BuilderDraft(BaseModel):
+    """An in-progress CV in the builder, persisted per scope (master or a job id).
+
+    Drafts are editable documents, not approve-once records: the approval is a
+    hash of the exact export-ready CV, so any edit invalidates it.
+    """
+
+    scope: str = "master"
+    cv: TailoredCV = Field(default_factory=TailoredCV)
+    hidden: list[CVSection] = Field(default_factory=list)
+    language: str = "en"
+    source: str = "ground_truth"
+    source_label: str = ""
+    export_version: int = 0
+    last_exports: dict[str, str] = Field(default_factory=dict)
+    approved_hash: str = ""
+    approved_at: datetime | None = None
+    updated_at: datetime = Field(default_factory=utcnow)
 
 
 class ValidationIssue(BaseModel):
