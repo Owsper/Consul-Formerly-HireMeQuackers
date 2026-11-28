@@ -642,6 +642,231 @@ def _cv_full_text(cv: TailoredCV) -> str:
     return normalize_text(" ".join(part for part in parts if part))
 
 
+# ---------------------------------------------------------------------------
+# Factual entry fields
+# ---------------------------------------------------------------------------
+_ENTRY_FIELDS = {"title": "title", "organization": "organisation",
+                 "location": "location", "dates": "dates"}
+_ENTRY_LANGUAGES = ("en", "de", "fr", "es", "nl")
+
+
+def _fact_record(*, titles: tuple[str, ...] = (), organizations: tuple[str, ...] = (),
+                 locations: tuple[str, ...] = (),
+                 dates: tuple[str, ...] = ()) -> dict[str, set[str]]:
+    """The normalised values one Ground Truth record permits per field."""
+    return {
+        "title": {normalize_text(value) for value in titles if (value or "").strip()},
+        "organization": {normalize_text(value) for value in organizations
+                         if (value or "").strip()},
+        "location": {normalize_text(value) for value in locations if (value or "").strip()},
+        "dates": {normalize_text(value) for value in dates if (value or "").strip()},
+    }
+
+
+def entry_fact_records(profile: CandidateProfileData) -> list[dict[str, set[str]]]:
+    """Every identity fact the Ground Truth records for an entry.
+
+    A document may repeat these values and nothing else. Title, organisation,
+    location and dates carry as much weight as a bullet, so an employer, job
+    title, city or date range the profile does not contain must never be
+    exported as fact — whether a person typed it or a model suggested it.
+    """
+    records: list[dict[str, set[str]]] = []
+    for entry in profile.employment:
+        records.append(_fact_record(
+            titles=(entry.title,), organizations=(entry.employer,),
+            locations=(entry.location,),
+            dates=tuple(_dates(entry.start_date, entry.end_date, entry.current, language)
+                        for language in _ENTRY_LANGUAGES),
+        ))
+    for project in profile.projects:
+        # A project prints its name as the title and its role as the
+        # organisation, or the role alone when there is no name.
+        records.append(_fact_record(
+            titles=(project.name, project.role), organizations=(project.role,),
+            dates=tuple(_dates(project.start_date, project.end_date, False, language)
+                        for language in _ENTRY_LANGUAGES),
+        ))
+    for education in profile.education:
+        headline = _join_nonempty([education.qualification or education.degree,
+                                   education.subject], " ")
+        records.append(_fact_record(
+            titles=(headline, education.institution),
+            organizations=(education.institution,),
+            dates=tuple(_dates(education.start_date, education.end_date, False, language)
+                        for language in _ENTRY_LANGUAGES),
+        ))
+    return records
+
+
+def unsupported_entry_facts(entry: CVEntry,
+                            records: list[dict[str, set[str]]]) -> list[str]:
+    """Which stated facts of one entry the Ground Truth does not record."""
+    claims = {field: normalize_text(getattr(entry, field) or "") for field in _ENTRY_FIELDS}
+    claims = {field: value for field, value in claims.items() if value}
+    if not claims:
+        return []
+    candidates = [
+        record for record in records
+        if (claims.get("title") and claims["title"] in record["title"])
+        or (claims.get("organization") and claims["organization"] in record["organization"])
+    ]
+    if not candidates:
+        return ["a title or organisation that is not in your Ground Truth"]
+    best: list[str] = []
+    for record in candidates:
+        problems = [_ENTRY_FIELDS[field] for field, value in claims.items()
+                    if value not in record[field]]
+        if not problems:
+            return []
+        if not best or len(problems) < len(best):
+            best = problems
+    return best
+
+
+def _entry_fact_issues(cv: TailoredCV,
+                       profile: CandidateProfileData) -> list[ValidationIssue]:
+    records = entry_fact_records(profile)
+    issues: list[ValidationIssue] = []
+    for section in cv.sections:
+        for entry in section.entries:
+            problems = unsupported_entry_facts(entry, records)
+            if not problems:
+                continue
+            label = entry.title or entry.organization or "Untitled entry"
+            issues.append(ValidationIssue(
+                severity="error", code="unsupported_entry_fact",
+                message=(f"The entry '{label}' under '{section.heading}' states "
+                         f"{_join_list(problems, 'en')} that your Ground Truth does not "
+                         "record. Correct it or remove the entry before exporting."),
+            ))
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# Qualitative summary claims
+# ---------------------------------------------------------------------------
+# A summary word carries the same weight as a bullet. These tables say which
+# claim needs which recorded fact before it may be printed.
+_SENIORITY_TERMS: dict[str, tuple[str, ...]] = {
+    "senior": ("senior",),
+    "lead": ("lead", "leader", "head", "principal", "staff"),
+    "principal": ("principal", "staff"),
+    "staff": ("staff",),
+    "head of": ("head",),
+    "director": ("director", "head", "chief"),
+    "chief": ("chief", "head"),
+    "manager": ("manager", "management", "lead", "head"),
+    "management": ("manager", "management", "lead", "head"),
+}
+
+_CREDENTIAL_TERMS: tuple[tuple[tuple[str, ...], str, str], ...] = (
+    (("certified", "certificate", "certification", "certifications"),
+     "certifications", "holds no recorded certification"),
+    (("degree", "bachelor", "master", "mba", "phd", "doctorate", "graduate",
+      "graduated", "university"),
+     "education", "has no recorded education"),
+    (("award-winning", "award winner", "awarded", "award"),
+     "awards", "has no recorded award"),
+    (("published", "publication", "publications"),
+     "publications", "has no recorded publication"),
+)
+
+_TEAM_CLAIM = re.compile(
+    r"\b(?:led|lead|leading|managed|managing|manage)\b[^.]{0,40}\bteam")
+
+
+def _mentions(text: str, phrase: str) -> bool:
+    return re.search(rf"\b{re.escape(phrase)}\b", text) is not None
+
+
+def _profile_claims_text(profile: CandidateProfileData) -> str:
+    """Every recorded fact as one normalised blob, for phrase support checks."""
+    parts: list[str] = []
+    for entry in profile.employment:
+        parts.extend([entry.title, entry.employer, *entry.responsibilities,
+                      *entry.achievements, *entry.quantified_results])
+    for project in profile.projects:
+        parts.extend([project.name or "", project.role or "", project.description or "",
+                      project.implementation or "", project.measurable_results or "",
+                      *project.verified_achievements])
+    for education in profile.education:
+        parts.extend([education.qualification or "", education.degree or "",
+                      education.subject or "", *education.achievements,
+                      *education.academic_projects])
+    return normalize_text(" ".join(part for part in parts if part))
+
+
+def _summary_claim_issues(summary: str, profile: CandidateProfileData, *,
+                          context: tuple[str, ...] = ()) -> list[ValidationIssue]:
+    """Summary prose must be inferable from the Ground Truth.
+
+    The years/numbers/learning checks catch quantitative invention; this catches
+    the qualitative claims that carry the same weight — seniority, leadership,
+    credentials, language fluency, awards and publications.
+
+    ``context`` holds the target job title, company and "applying for" line.
+    Naming the advertised role ("Applying for the Senior Backend Engineer role")
+    is not a claim about the candidate, so that wording is removed first.
+    """
+    text = normalize_text(summary)
+    for phrase in context:
+        cleaned = normalize_text(phrase or "")
+        if cleaned:
+            text = text.replace(cleaned, " ")
+    text = normalize_whitespace(text)
+    if not text:
+        return []
+    issues: list[ValidationIssue] = []
+
+    def flag(message: str) -> None:
+        issues.append(ValidationIssue(severity="error", code="unsupported_summary_claim",
+                                      message=message))
+
+    titles = normalize_text(" ".join(
+        [profile.personal.professional_title or "",
+         *[entry.title or "" for entry in profile.employment]]))
+    for term, supported_by in _SENIORITY_TERMS.items():
+        if _mentions(text, term) and not any(_mentions(titles, token)
+                                             for token in supported_by):
+            flag(f"The summary claims '{term}' seniority, but no recorded job title "
+                 "contains that level.")
+
+    for terms, attribute, reason in _CREDENTIAL_TERMS:
+        for term in terms:
+            if not _mentions(text, term):
+                continue
+            if attribute == "education":
+                supported = bool(profile.education)
+            else:
+                supported = bool(getattr(profile.additional, attribute))
+            if not supported:
+                flag(f"The summary says '{term}', but the profile {reason}.")
+                break
+
+    languages = normalize_text(" ".join(
+        f"{item.language} {item.proficiency}" for item in profile.additional.languages))
+    if any(_mentions(text, term) for term in ("native", "bilingual")) and not any(
+            _mentions(languages, token) for token in ("native", "bilingual")):
+        flag("The summary describes a language as native or bilingual, but no recorded "
+             "language proficiency supports that.")
+    elif _mentions(text, "fluent") and not any(
+            _mentions(languages, token)
+            for token in ("fluent", "native", "bilingual", "c1", "c2")):
+        flag("The summary describes a language as fluent, but no recorded language "
+             "proficiency supports that.")
+
+    if _TEAM_CLAIM.search(text) and not _TEAM_CLAIM.search(_profile_claims_text(profile)):
+        flag("The summary claims team leadership, but the recorded employment does not "
+             "describe leading or managing a team.")
+
+    if _mentions(text, "project experience") and not (
+            profile.projects or any(entry.academic_projects for entry in profile.education)):
+        flag("The summary claims project experience, but no project is recorded.")
+
+    return issues
+
+
 def _completeness_issues(cv: TailoredCV,
                          profile: CandidateProfileData) -> list[ValidationIssue]:
     """The parts a sendable CV must contain.
@@ -784,6 +1009,10 @@ def validate_cv(cv: TailoredCV, profile: CandidateProfileData,
                 message=(f"The summary presents '{skill}' as a skill even though it is "
                          "recorded as currently learning."),
             ))
+    issues.extend(_summary_claim_issues(
+        cv.summary, profile,
+        context=(cv.target_job_title, cv.target_company, cv.header.applying_for),
+    ))
     if not bullets and not has_career_content:
         issues.append(ValidationIssue(
             severity="warning", code="no_experience_evidence",
@@ -821,6 +1050,8 @@ def validate_cv(cv: TailoredCV, profile: CandidateProfileData,
     # A CV is only sendable when every part of it is there. Missing parts are
     # errors so the document is never presented or handed out incomplete.
     issues.extend(_completeness_issues(cv, profile))
+    # Names, employers, places and dates are claims too.
+    issues.extend(_entry_fact_issues(cv, profile))
 
     # Contact details
     if not profile.personal.email:
