@@ -385,7 +385,6 @@ def _render_versions(job_id: str) -> None:
             try:
                 with session_scope() as session:
                     files = reexport(session, chosen, formats=("docx", "pdf", "txt"))
-                    revoke_cv_approval(session, chosen)
                 st.success("Re-exported: " + ", ".join(files)
                            + ". Re-approve after reviewing the new preview.")
                 st.rerun()
