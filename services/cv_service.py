@@ -162,6 +162,12 @@ def ensure_preview(session: Session, cv_id: int, *,
 
 def reexport(session: Session, cv_id: int, *, formats: tuple[str, ...] = ("docx", "pdf"),
              template_path: str | None = None) -> dict[str, str]:
+    """Render the stored version again and withdraw any approval.
+
+    A new render is a new artefact: the preview, pages and parsed text may all
+    differ, so the version must be reviewed and approved again. The revocation
+    lives here, not in the page, so every caller keeps the gate honest.
+    """
     row = get_version(session, cv_id)
     if row is None:
         raise JobNotFoundError("That CV version does not exist.")
@@ -176,6 +182,7 @@ def reexport(session: Session, cv_id: int, *, formats: tuple[str, ...] = ("docx"
     report = load_cv(row)[1]
     _attach_layout_report(report, files)
     row.validation_json = report.model_dump_json()
+    revoke_cv_approval(session, cv_id)
     session.flush()
     return files
 
