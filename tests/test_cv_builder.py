@@ -93,6 +93,67 @@ def test_evaluation_never_mutates_the_draft(profile_data, evidence):
     assert draft.cv.sections[0].entries[0].bullets[0].id == first_id
 
 
+def test_entry_facts_are_checked_against_ground_truth(profile_data, evidence):
+    """Title, organisation, place and dates are claims, not free text."""
+    draft = builder.master_draft(profile_data, evidence)
+    entry = draft.cv.sections[0].entries[0]
+    entry.organization = "Globex"
+    evaluation = builder.evaluate(draft.cv, profile_data, evidence)
+    assert not evaluation.exportable
+    assert any(issue.code == "unsupported_entry_fact"
+               for issue in evaluation.report.issues)
+
+    entry.organization = "Shop GmbH"
+    entry.dates = "2019 – 2030"
+    evaluation = builder.evaluate(draft.cv, profile_data, evidence)
+    codes = [issue.code for issue in evaluation.report.issues]
+    assert "unsupported_entry_fact" in codes
+    assert "dates" in " ".join(issue.message for issue in evaluation.report.issues)
+
+    # The facts as recorded are accepted.
+    entry.dates = "2021 – 2024"
+    evaluation = builder.evaluate(draft.cv, profile_data, evidence)
+    assert evaluation.exportable, [issue.message for issue in evaluation.report.issues]
+
+
+def test_entries_are_added_from_ground_truth(profile_data, evidence):
+    draft = builder.master_draft(profile_data, evidence)
+    assert builder.available_entries(draft, profile_data, evidence) == []
+
+    removed = draft.cv.sections[0].entries.pop(0)
+    options = builder.available_entries(draft, profile_data, evidence)
+    labels = [label for label, _ in options]
+    assert any(label.startswith("Experience · Software Engineer") for label in labels)
+    label, entry = next(item for item in options if item[0] == labels[0])
+    assert (entry.title, entry.organization, entry.location, entry.dates) == \
+        (removed.title, removed.organization, removed.location, removed.dates)
+    assert entry.bullets and all(bullet.evidence_ids for bullet in entry.bullets)
+
+    draft.cv.sections[0].entries.append(entry)
+    evaluation = builder.evaluate(draft.cv, profile_data, evidence)
+    assert evaluation.exportable, [issue.message for issue in evaluation.report.issues]
+
+
+def test_summary_claims_need_ground_truth_support(profile_data, evidence):
+    draft = builder.master_draft(profile_data, evidence)
+    draft.cv.summary = ("Senior Engineering Manager leading a team of engineers, native "
+                        "speaker of Spanish, driving platform reliability.")
+    evaluation = builder.evaluate(draft.cv, profile_data, evidence)
+    assert not evaluation.exportable
+    claims = [issue.message for issue in evaluation.report.issues
+              if issue.code == "unsupported_summary_claim"]
+    joined = " ".join(claims)
+    assert "senior" in joined
+    assert "manager" in joined
+    assert "team" in joined
+    assert "native" in joined
+
+    draft.cv.summary = "Backend Engineer with 3+ years of experience across Python and SQL."
+    evaluation = builder.evaluate(draft.cv, profile_data, evidence)
+    assert not [issue for issue in evaluation.report.issues
+                if issue.code == "unsupported_summary_claim"]
+
+
 def test_approval_is_bound_to_the_exact_document(profile_data, evidence):
     draft = builder.master_draft(profile_data, evidence)
     evaluation = builder.evaluate(draft.cv, profile_data, evidence)
