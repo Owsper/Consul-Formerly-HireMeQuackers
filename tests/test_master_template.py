@@ -134,6 +134,19 @@ def test_approval_gate_on_a_generated_version(session, approved_profile, profile
     assert is_cv_approved(session, cv_row.id) is False
 
 
+def test_reexport_revokes_approval_in_the_service(session, approved_profile, job_record):
+    from services.cv_service import reexport
+
+    row, _ = persist_job(session, job_record)
+    cv_row, _cv, _report = generate_cv_for_job(session, row.id, use_llm=False)
+    approve_cv(session, cv_row.id)
+    assert is_cv_approved(session, cv_row.id) is True
+
+    files = reexport(session, cv_row.id, formats=("docx", "txt"))
+    assert files
+    assert is_cv_approved(session, cv_row.id) is False
+
+
 def test_generation_exports_nothing_until_the_preview_is_viewed(
         session, approved_profile, job_record):
     """Generation drafts and validates; files exist only once a version is shown."""
