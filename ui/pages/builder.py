@@ -98,7 +98,7 @@ def render() -> None:
 
     left, right = st.columns([1.1, 1], gap="large")
     with left:
-        _editor(draft, scope, checker, labels)
+        _editor(draft, scope, checker, labels, profile, evidence)
     # The editor mutated the draft in place, so evaluate and save only after it.
     evaluation = builder.evaluate(draft.cv, profile, evidence, job_record)
     _save(draft)
@@ -182,7 +182,8 @@ def _starters(scope: str, profile: CandidateProfileData, evidence: list[Evidence
 # ---------------------------------------------------------------------------
 # Editor
 # ---------------------------------------------------------------------------
-def _editor(draft: BuilderDraft, scope: str, checker, labels: dict[str, str]) -> None:
+def _editor(draft: BuilderDraft, scope: str, checker, labels: dict[str, str],
+            profile: CandidateProfileData, evidence: list[EvidenceItem]) -> None:
     cv = draft.cv
     st.markdown("#### Document")
     with st.container(border=True):
@@ -203,7 +204,7 @@ def _editor(draft: BuilderDraft, scope: str, checker, labels: dict[str, str]) ->
                               key=f"bb_{scope}_summary")
 
     for index, section in enumerate(list(cv.sections)):
-        _section_card(draft, section, index, scope, checker, labels)
+        _section_card(draft, section, index, scope, checker, labels, profile, evidence)
 
     _add_section(draft, scope)
     _hidden_sections(draft, scope)
@@ -227,7 +228,8 @@ def _editor(draft: BuilderDraft, scope: str, checker, labels: dict[str, str]) ->
 
 
 def _section_card(draft: BuilderDraft, section, index: int, scope: str, checker,
-                  labels: dict[str, str]) -> None:
+                  labels: dict[str, str], profile: CandidateProfileData,
+                  evidence: list[EvidenceItem]) -> None:
     cv = draft.cv
     with st.container(border=True):
         head = st.columns([6, 1, 1, 1])
@@ -254,31 +256,18 @@ def _section_card(draft: BuilderDraft, section, index: int, scope: str, checker,
             st.caption("Empty sections are not exported.")
 
         if section.kind == "entries":
-            _entries_editor(draft, section, scope, labels)
+            _entries_editor(draft, section, scope, labels, profile, evidence)
         elif section.kind == "skills":
             _skills_editor(draft, section, scope, checker)
         elif section.kind == "lines":
             _lines_editor(draft, section, scope)
 
 
-def _entries_editor(draft: BuilderDraft, section, scope: str, labels: dict[str, str]) -> None:
+def _entries_editor(draft: BuilderDraft, section, scope: str, labels: dict[str, str],
+                    profile: CandidateProfileData, evidence: list[EvidenceItem]) -> None:
     for e_index, entry in enumerate(list(section.entries)):
-        with st.expander(f"{e_index + 1}. {entry.title or 'New entry'}", expanded=False):
-            columns = st.columns(2)
-            entry.title = columns[0].text_input("Title", value=entry.title,
-                                                key=f"bb_{scope}_{entry.id}_title")
-            entry.organization = columns[1].text_input(
-                "Organisation", value=entry.organization, key=f"bb_{scope}_{entry.id}_org")
-            columns = st.columns(2)
-            entry.location = columns[0].text_input("Location", value=entry.location,
-                                                   key=f"bb_{scope}_{entry.id}_loc")
-            entry.dates = columns[1].text_input("Dates", value=entry.dates,
-                                                key=f"bb_{scope}_{entry.id}_dates")
-            technologies = st.text_input(
-                "Technologies (comma separated)", value=", ".join(entry.technologies),
-                key=f"bb_{scope}_{entry.id}_tech")
-            entry.technologies = [item.strip() for item in technologies.split(",") if item.strip()]
-
+        with st.expander(f"{e_index + 1}. {entry.title or 'Untitled entry'}", expanded=False):
+            _entry_facts(entry)
             for b_index, bullet in enumerate(list(entry.bullets)):
                 columns = st.columns([9, 1])
                 bullet.text = columns[0].text_area(
@@ -306,9 +295,37 @@ def _entries_editor(draft: BuilderDraft, section, scope: str, labels: dict[str, 
                 builder.remove_at(section.entries, e_index)
                 _commit(draft)
 
-    if st.button("+ Entry", key=f"bb_{scope}_{section.id}_add_entry"):
-        builder.add_entry(section)
-        _commit(draft)
+    _add_entry(draft, section, scope, profile, evidence)
+
+
+def _entry_facts(entry) -> None:
+    """Title, organisation, place and dates are read from the verified record."""
+    st.markdown(f"**{entry.title or 'Untitled entry'}**")
+    details = " · ".join(value for value in
+                         (entry.organization, entry.location, entry.dates) if value)
+    st.caption(details or "No organisation, location or dates recorded")
+    if entry.technologies:
+        st.caption("Technologies: " + ", ".join(entry.technologies))
+    st.caption("Title, organisation, location, dates and technologies come from Ground "
+               "Truth and cannot be retyped here. Edit the Ground Truth profile to correct "
+               "them.")
+
+
+def _add_entry(draft: BuilderDraft, section, scope: str,
+               profile: CandidateProfileData, evidence: list[EvidenceItem]) -> None:
+    options = builder.available_entries(draft, profile, evidence)
+    if not options:
+        st.caption("Every entry in your Ground Truth is already in this document.")
+        return
+    with st.expander("+ Add an entry from Ground Truth"):
+        st.caption("Entries are selected from your verified profile; bullets are what you "
+                   "write here, and every bullet still has to cite evidence.")
+        choice = st.selectbox("Entry", [label for label, _ in options],
+                              key=f"bb_{scope}_{section.id}_pick_entry")
+        if st.button("Add entry", key=f"bb_{scope}_{section.id}_add_entry"):
+            section.entries.append(next(item for label, item in options
+                                        if label == choice))
+            _commit(draft)
 
 
 def _skills_editor(draft: BuilderDraft, section, scope: str, checker) -> None:
