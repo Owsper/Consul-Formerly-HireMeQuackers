@@ -1,9 +1,11 @@
 """CV Builder: a direct-manipulation editor over Consul's evidence contract.
 
-The builder behaves like a document editor — reorder sections, add entries and
-bullets, hide what the advert does not need, and see the page as you type — but
-every rule that decides *what may appear* still comes from Consul:
+The builder behaves like a document editor — reorder sections, add verified
+entries, write bullets, hide what the advert does not need, and see the page as
+you type — but every rule that decides *what may appear* still comes from Consul:
 
+* entries are selected from Ground Truth records; their title, organisation,
+  location and dates are never retyped (``entry_fact_records``),
 * bullets and skills are checked against the evidence ledger (``sanitize_cv``),
 * the document is validated with the same ``validate_cv`` used by CV Studio,
 * export goes through the master template and the measured/Chromium PDF path,
@@ -30,6 +32,7 @@ from core.schemas import (
     BuilderDraft, CandidateProfileData, CVBullet, CVEntry, CVHeader, CVRow, CVSection,
     EvidenceItem, JobRecord, MatchResult, TailoredCV, ValidationReport,
 )
+from core.text import normalize_text
 from services.cv_tailoring import (
     _active_evidence, _allowed_skill_text, _dates, _heading, _ids_for_path, _join_nonempty,
     _sentence, _skill_is_supported, _visa_summary, _years_of_experience,
@@ -214,6 +217,110 @@ def blank_draft(profile: CandidateProfileData, *, scope: str, language: str = "e
 
 
 # ---------------------------------------------------------------------------
+# Entries built from Ground Truth
+# ---------------------------------------------------------------------------
+def _employment_entry(entry: Any, index: int, evidence: list[EvidenceItem],
+                      language: str) -> CVEntry:
+    paths = [
+        (f"employment[{index}].responsibilities[{j}]", text)
+        for j, text in enumerate(entry.responsibilities)
+    ] + [
+        (f"employment[{index}].achievements[{j}]", text)
+        for j, text in enumerate(entry.achievements)
+    ] + [
+        (f"employment[{index}].quantified_results[{j}]", text)
+        for j, text in enumerate(entry.quantified_results)
+    ]
+    return CVEntry(
+        id=_new_id("ent"), title=entry.title, organization=entry.employer,
+        location=entry.location,
+        dates=_dates(entry.start_date, entry.end_date, entry.current, language),
+        technologies=list(entry.technologies),
+        bullets=_master_bullets(evidence, paths),
+    )
+
+
+def _project_entry(project: Any, index: int, evidence: list[EvidenceItem],
+                   language: str) -> CVEntry:
+    paths = [
+        (f"projects[{index}].description", project.description),
+        (f"projects[{index}].implementation", project.implementation),
+        (f"projects[{index}].results", project.measurable_results),
+    ] + [
+        (f"projects[{index}].achievements[{j}]", text)
+        for j, text in enumerate(project.verified_achievements)
+    ]
+    return CVEntry(
+        id=_new_id("ent"), title=project.name or project.role,
+        organization=project.role if project.name else "",
+        dates=_dates(project.start_date, project.end_date, False, language),
+        technologies=list(project.technologies),
+        bullets=_master_bullets(evidence, paths),
+    )
+
+
+def _education_entry(education: Any, index: int, evidence: list[EvidenceItem],
+                     language: str) -> CVEntry:
+    headline = " ".join(
+        x for x in (education.qualification or education.degree, education.subject) if x
+    )
+    paths = [
+        (f"education[{index}].achievements[{j}]", text)
+        for j, text in enumerate(education.achievements)
+    ] + [
+        (f"education[{index}].academic_projects[{j}]", text)
+        for j, text in enumerate(education.academic_projects)
+    ]
+    return CVEntry(
+        id=_new_id("ent"), title=headline or education.institution,
+        organization=education.institution if headline else "", location="",
+        dates=_dates(education.start_date, education.end_date, False, language),
+        bullets=_master_bullets(evidence, paths),
+    )
+
+
+def ground_truth_entries(profile: CandidateProfileData, evidence: list[EvidenceItem], *,
+                         language: str = "en") -> list[tuple[str, CVEntry]]:
+    """Every recorded entry, ready to be added to a draft.
+
+    The builder never lets a candidate type a new employer, job title, place or
+    date range: an entry is a verified record selected from the profile, and
+    only its bullets are written (and evidence-checked) in the editor.
+    """
+    available: list[tuple[str, CVEntry]] = []
+    for index, entry in enumerate(profile.employment):
+        label = f"Experience · {entry.title or 'Untitled role'}"
+        if entry.employer:
+            label += f" — {entry.employer}"
+        available.append((label, _employment_entry(entry, index, evidence, language)))
+    for index, project in enumerate(profile.projects):
+        label = f"Project · {project.name or project.role or 'Untitled project'}"
+        available.append((label, _project_entry(project, index, evidence, language)))
+    for index, education in enumerate(profile.education):
+        headline = " ".join(
+            x for x in (education.qualification or education.degree, education.subject) if x
+        ) or education.institution
+        available.append((f"Education · {headline or 'Untitled study'}",
+                          _education_entry(education, index, evidence, language)))
+    return available
+
+
+def _entry_key(entry: CVEntry) -> tuple[str, str]:
+    return (normalize_text(entry.title or ""), normalize_text(entry.organization or ""))
+
+
+def available_entries(draft: BuilderDraft, profile: CandidateProfileData,
+                      evidence: list[EvidenceItem]) -> list[tuple[str, CVEntry]]:
+    """Ground Truth entries the draft does not already show (hidden ones count)."""
+    used = {_entry_key(entry)
+            for section in [*draft.cv.sections, *draft.hidden]
+            for entry in section.entries}
+    return [(label, entry) for label, entry
+            in ground_truth_entries(profile, evidence, language=draft.language)
+            if _entry_key(entry) not in used]
+
+
+# ---------------------------------------------------------------------------
 # Master CV: every verified fact, no job filter
 # ---------------------------------------------------------------------------
 def build_master_cv(profile: CandidateProfileData, evidence: list[EvidenceItem], *,
@@ -233,25 +340,8 @@ def build_master_cv(profile: CandidateProfileData, evidence: list[EvidenceItem],
     sections: list[CVSection] = []
 
     if profile.employment:
-        entries: list[CVEntry] = []
-        for i, entry in enumerate(profile.employment):
-            paths = [
-                (f"employment[{i}].responsibilities[{j}]", text)
-                for j, text in enumerate(entry.responsibilities)
-            ] + [
-                (f"employment[{i}].achievements[{j}]", text)
-                for j, text in enumerate(entry.achievements)
-            ] + [
-                (f"employment[{i}].quantified_results[{j}]", text)
-                for j, text in enumerate(entry.quantified_results)
-            ]
-            bullets = _master_bullets(evidence, paths)
-            entries.append(CVEntry(
-                id=_new_id("ent"), title=entry.title, organization=entry.employer,
-                location=entry.location,
-                dates=_dates(entry.start_date, entry.end_date, entry.current, language),
-                technologies=list(entry.technologies), bullets=bullets,
-            ))
+        entries = [_employment_entry(entry, i, evidence, language)
+                   for i, entry in enumerate(profile.employment)]
         sections.append(CVSection(id=_new_id("sec"),
                                   heading=_heading("Professional Experience", language),
                                   kind="entries", entries=entries))
@@ -259,21 +349,7 @@ def build_master_cv(profile: CandidateProfileData, evidence: list[EvidenceItem],
     professional: list[CVEntry] = []
     academic: list[CVEntry] = []
     for i, project in enumerate(profile.projects):
-        paths = [
-            (f"projects[{i}].description", project.description),
-            (f"projects[{i}].implementation", project.implementation),
-            (f"projects[{i}].results", project.measurable_results),
-        ] + [
-            (f"projects[{i}].achievements[{j}]", text)
-            for j, text in enumerate(project.verified_achievements)
-        ]
-        entry = CVEntry(
-            id=_new_id("ent"), title=project.name or project.role,
-            organization=project.role if project.name else "",
-            dates=_dates(project.start_date, project.end_date, False, language),
-            technologies=list(project.technologies),
-            bullets=_master_bullets(evidence, paths),
-        )
+        entry = _project_entry(project, i, evidence, language)
         (academic if project.label == "academic_project" else professional).append(entry)
     if professional:
         sections.append(CVSection(id=_new_id("sec"),
@@ -285,22 +361,8 @@ def build_master_cv(profile: CandidateProfileData, evidence: list[EvidenceItem],
                                   kind="entries", entries=academic))
 
     if profile.education:
-        entries = []
-        for i, edu in enumerate(profile.education):
-            headline = " ".join(x for x in (edu.qualification or edu.degree, edu.subject) if x)
-            paths = [
-                (f"education[{i}].achievements[{j}]", text)
-                for j, text in enumerate(edu.achievements)
-            ] + [
-                (f"education[{i}].academic_projects[{j}]", text)
-                for j, text in enumerate(edu.academic_projects)
-            ]
-            entries.append(CVEntry(
-                id=_new_id("ent"), title=headline or edu.institution,
-                organization=edu.institution if headline else "", location="",
-                dates=_dates(edu.start_date, edu.end_date, False, language),
-                bullets=_master_bullets(evidence, paths),
-            ))
+        entries = [_education_entry(edu, i, evidence, language)
+                   for i, edu in enumerate(profile.education)]
         sections.append(CVSection(id=_new_id("sec"),
                                   heading=_heading("Education", language),
                                   kind="entries", entries=entries))
@@ -442,12 +504,6 @@ def restore_master_order(draft: BuilderDraft) -> None:
         ranked.append((rank, index, section))
     ranked.sort(key=lambda item: (item[0], item[1]))
     draft.cv.sections = [item[2] for item in ranked]
-
-
-def add_entry(section: CVSection) -> CVEntry:
-    entry = CVEntry(id=_new_id("ent"))
-    section.entries.append(entry)
-    return entry
 
 
 def add_bullet(entry: CVEntry) -> CVBullet:
